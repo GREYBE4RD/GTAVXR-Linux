@@ -8,9 +8,9 @@
     }
     // CopyResource (region=false) / CopySubresourceRegion (region=true) into a swapchain image; BGRA runtimes make exactly
     // the source-v16 call, RGBA runtimes draw the same bytes (gx_chain::Blitter, P4: byte-exact into RGBA/sRGB/typeless)
-    void swap_copy(ID3D11Texture2D*target,ID3D11Texture2D*source,UINT x=0,UINT y=0,const D3D11_BOX*box=nullptr,bool region=false){
-        if(!swapRgba){if(region)context->CopySubresourceRegion(target,0,x,y,0,source,0,box);else context->CopyResource(target,source);return;}
-        try{swapBlit.init(device.Get());swapBlit.copy(context.Get(),target,x,y,source,box);}
+    void swap_copy(ID3D11Texture2D*target,ID3D11Texture2D*source,UINT x=0,UINT y=0,const D3D11_BOX*box=nullptr,bool region=false,bool opaque=false){
+        if(!swapRgba&&!opaque){if(region)context->CopySubresourceRegion(target,0,x,y,0,source,0,box);else context->CopyResource(target,source);return;}
+        try{swapBlit.init(device.Get());swapBlit.copy(context.Get(),target,x,y,source,box,opaque);}
         catch(const gx_chain::Error&e){throw std::runtime_error(std::string("XR_RGBA_COPY_")+e.stage);}
     }
     // after initialize: the EXE's render/output sizes and the Suite preset; 0 = NR/SR ready, 1 = bilinear blit

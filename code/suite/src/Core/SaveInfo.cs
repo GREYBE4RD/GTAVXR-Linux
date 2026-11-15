@@ -4,11 +4,28 @@ using System.Linq;
 using System.Text;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Collections.Generic;
 
 namespace GtavxrSuite {
     // Reads the title GTA V writes at the start of each story save:
     // "(Autoguardado) Cambios (22.5%) - 10/01/26 05:03:45" (UTF-16 from byte 4).
     public class SaveInfo {
+        internal static bool IsStorySlot(string name){
+            return Regex.IsMatch(name,@"^SGTA5[0-9]{4}$",RegexOptions.IgnoreCase);
+        }
+
+        internal static bool HasLocalStory(IEnumerable<SaveFileRef> files){
+            return files.Any(f=>f.relative.StartsWith("Default/",StringComparison.OrdinalIgnoreCase)&&
+                                IsStorySlot(f.relative.Substring("Default/".Length)));
+        }
+
+        internal static ILookup<string,SaveFileRef> RetailAccounts(IEnumerable<SaveFileRef> files){
+            return files.Select(f=>new{file=f,parts=f.relative.Split('/')})
+                .Where(x=>x.parts.Length==3&&x.parts[0].Equals("Profiles",StringComparison.OrdinalIgnoreCase)&&
+                          IsStorySlot(x.parts[2]))
+                .ToLookup(x=>x.parts[1],x=>x.file,StringComparer.OrdinalIgnoreCase);
+        }
+
         public string mission {get;set;}
         public double percent {get;set;}
         public bool autosave {get;set;}

@@ -438,7 +438,13 @@ namespace GtavxrSuite.Content {
         // Pools the source-built EXE sizes with 16-bit counters: the map data and static bounds stores each feed a fwBoxStreamer whose
         // arrays are atArray<..., u16> (boxstreamer.h, array.h: count < 65535). A larger PoolSize stops the game in fwBoxStreamer::Init
         // at CGame::Init (WoV Plus MapDataStore 155020, Suite 2.3.5 session 20261103T032803). Retail 3889 takes more; this EXE does not.
-        public static readonly Dictionary<string,int> PoolLimits=new Dictionary<string,int>{{"MapDataStore",65534},{"StaticBounds",65534}};
+        // Streaming bucket IDs reserve 16 bits for the entity slot. Both of these pools can exceed
+        // that range in merged content profiles and overwrite the type bits of the ID.
+        const int StreamingEntitySlots=1<<16;
+        public static readonly Dictionary<string,int> PoolLimits=new Dictionary<string,int>{
+            {"MapDataStore",65534},{"StaticBounds",65534},
+            {"Building",StreamingEntitySlots},{"Dummy Object",StreamingEntitySlots}
+        };
         public static string ClampPools(string text,List<string> changed){
             foreach(var kv in PoolLimits){
                 var pat=new Regex("(<PoolName>"+Regex.Escape(kv.Key)+"</PoolName>\\s*<PoolSize value=\")(\\d+)(\")");

@@ -19,7 +19,8 @@ namespace GtavxrSuite {
         public const string ProfileId="suite";
         // 2: gameconfig pools limited to what GTAVXR's EXE takes (ContentBuilder.ClampPools); a profile built by 1 is rebuilt once.
         // 3: merged .ymt whose root GTA reads only as binary PSO are served only to versions listing it in pso_xml.
-        public const string Engine="content-engine-3";
+        // 4: rebuild cached profiles with the streaming ID limits for Building and Dummy Object.
+        public const string Engine="content-engine-4";
         // GTA's game heap for a session that serves a content profile: World of Variety Plus pools do not fit the source's
         // 474 MB (Suite session 20261103T050457, "Error allocating ... in heap 0"). The script host v2 EXE reads it
         // (core/game_heap.h, 474..2000 MB); older EXEs ignore the argument.

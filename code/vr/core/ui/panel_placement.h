@@ -7,7 +7,7 @@
 // VEHICLE = a pose in LOCAL space the EXE computes every frame (the player's seat frame in the vehicle).
  
 #include "../core/bridge.h"
-#include "wrist_calibration.h"
+#include "ui_element_calibration.h"
 #include <math.h>
 #include <string.h>
 #pragma pack(push, 8)
@@ -19,13 +19,13 @@ struct GxPanelPlace
 };
 struct GxPanelPlacements
 {
-    uint32_t size, version, vehicleValid, reserved;
+    uint32_t size, version, vehicleValid, previewSubtitle;
     GxPose vehicle;
-    GxPanelPlace panel[11];
+    GxPanelPlace panel[12];
 };
 #pragma pack(pop)
 static_assert(sizeof(GxPanelPlace) == 72, "panel place POD ABI");
-static_assert(sizeof(GxPanelPlacements) == 864, "panel placements POD ABI");
+static_assert(sizeof(GxPanelPlacements) == 936, "panel placements POD ABI");
 typedef int(GX_CALL* GxSetPanelPlacements)(void*, const GxPanelPlacements*);
 namespace gx_panel
 {
@@ -42,6 +42,7 @@ enum Panel
     EL_STATUS,
     EL_OTHER,
     BUTTONS,
+    EL_SUBTITLES,
     COUNT
 };
 enum Anchor
@@ -55,10 +56,9 @@ enum Anchor
     ANCHOR_COUNT
 };
 // gx_ui_element kind (Money 0, Notifications 1, Phone 2, Help 3, Subtitles 4, Location 5, Status 6, Other 7, Wanted 8) -> panel;
-// subtitles stay the front panel of today (COUNT = not movable)
 inline unsigned elementPanel(unsigned kind)
 {
-    static const unsigned map[9] = {EL_MONEY,    EL_NOTIFICATIONS, EL_PHONE, EL_HELP, COUNT,
+    static const unsigned map[9] = {EL_MONEY,    EL_NOTIFICATIONS, EL_PHONE, EL_HELP, EL_SUBTITLES,
                                     EL_LOCATION, EL_STATUS,        EL_OTHER, WANTED};
     return kind < 9 ? map[kind] : COUNT;
 }
@@ -66,6 +66,11 @@ inline GxPose identity()
 {
     GxPose p = {0, 0, 0, 0, 0, 0, 1};
     return p;
+}
+inline GxPose subtitlePose(const GxUiElementProfile& profile)
+{
+    const GxPose neutral = {0, -.36, -1.45, 0, 0, 0, 1};
+    return profile.individual ? gx_ui_element::pose(neutral, profile, 1.f) : neutral;
 }
 inline GxPanelPlace place()
 {
@@ -81,7 +86,7 @@ inline GxPanelPlacements defaults()
     GxPanelPlacements p;
     memset(&p, 0, sizeof(p));
     p.size = sizeof(p);
-    p.version = 2;
+    p.version = 3;
     p.vehicle = identity();
     for (unsigned k = 0; k < COUNT; ++k)
         p.panel[k] = place();
@@ -98,7 +103,7 @@ inline bool finitePose(const GxPose& p, double reach)
 }
 inline bool valid(const GxPanelPlacements& p)
 {
-    if (p.size != sizeof(p) || p.version != 2 || p.vehicleValid > 1 || !finitePose(p.vehicle, 1e5))
+    if (p.size != sizeof(p) || p.version != 3 || p.vehicleValid > 1 || p.previewSubtitle > 1 || !finitePose(p.vehicle, 1e5))
         return false;
     for (unsigned k = 0; k < COUNT; ++k)
     {

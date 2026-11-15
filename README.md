@@ -2,11 +2,11 @@
   <img src="code/suite/resources/embedded/logo.png" width="420" alt="GTAVXR by LVL logo">
 </p>
 
-# GTAVXR by LVL 1.0
+# GTAVXR by LVL 1.0.2
 
 Explore the open world of GTA V Legacy in VR through Story Mode, with stereoscopic rendering, head tracking, and motion controllers.
 
-[Tester quick start and Quest 3 controls](docs/TESTER_QUICKSTART.md)
+[Download GTAVXR](https://github.com/LVL-VR/GTAVXR/releases/latest) · [Install, update or remove](docs/INSTALLATION.md) · [Controls](docs/VR_CONTROLS.md)
 
 ## Before you play
 
@@ -18,7 +18,7 @@ Explore the open world of GTA V Legacy in VR through Story Mode, with stereoscop
 
 ## Story Mode in VR
 
-GTAVXR 1.0 focuses on exploring the open world in VR. Story missions are playable, though some sequences may need an adjustment or a temporary switch to standard controls. Camera transitions controlled by the game can change your perspective abruptly or leave the view out of place when you regain control.
+GTAVXR focuses on exploring the open world in VR. Story missions are playable, though some sequences may need an adjustment or a temporary switch to standard controls. Camera transitions controlled by the game can change your perspective abruptly or leave the view out of place when you regain control.
 
 Cutscenes retain their original framing to preserve how each scene is presented. If a cutscene makes you feel motion sick, skip it when the game offers that option. If the camera is out of place when you return to gameplay, choose **VR Menu → Recenter**.
 
@@ -37,13 +37,11 @@ The first switch from Michael to Trevor in **North Yankton** can fail with motio
 
 [Known issues and workarounds](docs/KNOWN_ISSUES.md)
 
-## Install and play
+## Get started
 
-1. Prepare a legal copy of GTA V Legacy, 64-bit Windows, and a headset connected to your PC through a compatible OpenXR runtime.
-2. Download **GTAVXR.exe** from Releases. Right-click it and select **Run as administrator**. Select your GTA V Legacy folder, click **Continue**, then click **Install GTAVXR**. The Suite checks your game files and applies the included binary patch on your PC.
-3. Choose whether to copy your existing saves or start a new story.
-4. Open **Settings → Headset** and select the runtime for your connection. Click **Play** to enter Story Mode. Press **F10** if the game opens in flatscreen.
-5. Save your progress and select **Force GTA to close** in the Suite when you finish. Wait for the Suite to finish closing the session before playing again.
+- **New installation.** Use the Legacy folder that contains GTA5.exe. [Install and play](docs/INSTALLATION.md#install-and-play)
+- **Updating from 1.0.0.** Use your existing Suite library to keep your profiles and progress. [Update and keep your data](docs/INSTALLATION.md#update-and-keep-your-data)
+- **Starting over.** Choose whether to keep your VR data or delete it. [Uninstall from the game](docs/INSTALLATION.md#uninstall-from-the-game) · [Remove GTAVXR completely](docs/INSTALLATION.md#remove-gtavxr-completely)
 
 ## Guides
 

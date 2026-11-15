@@ -57,7 +57,14 @@ namespace GtavxrSuite {
         public bool RunsShvdnV3(){return script_host=="switch"&&runtime!=null&&runtime.Any(f=>String.Equals(f.path,"scripthost/ScriptHookVDotNet3.dll",StringComparison.OrdinalIgnoreCase));}
         public string contract_sha256 {get;set;}    // 2.4.1: hash of the suite-launch.json it was imported from; another hash (or none while the stored manifest misses contract fields) re-imports it
         public long Bytes(){return files.Sum(f=>f.bytes)+runtime.Sum(f=>f.bytes)+(replaces==null?0:replaces.Sum(f=>f.bytes));}
-        public string Label(){return build+" "+title;}
+        public string Label(){return DisplayTitle("es");}
+        public string DisplayTitle(string lang){return embedded_release?Title(lang):build+" "+Title(lang);}
+        public string VersionBadge(){
+            const string prefix="gtavxr-";
+            if(!embedded_release)return build;
+            return id!=null&&id.StartsWith(prefix,StringComparison.Ordinal)
+                ? id.Substring(prefix.Length).Replace('-','.') : Title("en");
+        }
         public List<string> Notes(string lang){return lang=="en"&&notes_en!=null&&notes_en.Count>0?notes_en:notes;}
         public string Title(string lang){return lang=="en"&&!String.IsNullOrEmpty(title_en)?title_en:title;}
     }
@@ -136,6 +143,8 @@ namespace GtavxrSuite {
         public string last_played_utc {get;set;}
         public long played_seconds {get;set;}
         public List<SaveFileRef> user {get;set;}    // the Rockstar user folder of this profile (saves, settings.xml)
+        public string imported_save_account {get;set;}
+        public string story_start {get;set;}    // null = automatic, "new", or the exact profile-relative save slot
         public bool has_vr_settings {get;set;}
         public string origin {get;set;}         // how it was created (import, new, copy)
         public bool test {get;set;}             // test profile: every Play is a test flight (game put back afterwards)
@@ -144,7 +153,7 @@ namespace GtavxrSuite {
         public string Option(string key,string def){string v;return options!=null&&options.TryGetValue(key,out v)&&v!=null?v:def;}
     }
     // A copy of a profile's saves + VR settings: history entries and the test profile's starting point.
-    public class ProfileCopy { public string schema {get;set;} public string tag {get;set;} public string utc {get;set;} public List<SaveFileRef> user {get;set;} public bool has_vr_settings {get;set;} }
+    public class ProfileCopy { public bool story_user_only {get;set;} public string schema {get;set;} public string tag {get;set;} public string utc {get;set;} public List<SaveFileRef> user {get;set;} public bool has_vr_settings {get;set;} public string imported_save_account {get;set;} public string story_start {get;set;} }
 
     public sealed class Library {
         private readonly Env env;
@@ -209,15 +218,21 @@ namespace GtavxrSuite {
         // Copies of the profile (saves + VR settings): history/<tag> (last 5) and start (test profile's starting point).
         public string CopyDir(string id,string where){return SafeFs.Under(ProfileDir(id),where);}
         public void KeepCopy(Profile p,string where,string tag){
+            KeepCopy(p,where,tag,EmbeddedRelease.UsesStoryData(p.version));
+        }
+
+        internal void KeepCopy(Profile p,string where,string tag,bool storyOnly){
             string dir=CopyDir(p.id,where);
+            var files=p.user??new List<SaveFileRef>();
+            if(storyOnly)files=files.Where(f=>UserTree.IsStoryData(f.relative)).ToList();
+            SafeFs.Budget(dir,files.Sum(f=>f.bytes));
             if(Directory.Exists(dir))Directory.Delete(dir,true);
             string tmp=dir+".tmp";if(Directory.Exists(tmp))Directory.Delete(tmp,true);
             Directory.CreateDirectory(tmp);
-            var files=p.user??new List<SaveFileRef>();
             UserTree.CopyInto(UserDir(p.id),files,Path.Combine(tmp,"user"));
             bool vr=p.has_vr_settings&&File.Exists(VrSettingsFile(p.id));
             if(vr)File.Copy(VrSettingsFile(p.id),Path.Combine(tmp,"vr-settings.ini"));
-            Json.Atomic(Path.Combine(tmp,"copy.json"),new ProfileCopy{schema="gtavxr-suite2-profile-copy-v1",tag=tag,utc=DateTime.UtcNow.ToString("o"),user=files,has_vr_settings=vr});
+            Json.Atomic(Path.Combine(tmp,"copy.json"),new ProfileCopy{schema="gtavxr-suite2-profile-copy-v1",tag=tag,utc=DateTime.UtcNow.ToString("o"),user=files,story_user_only=storyOnly,has_vr_settings=vr,imported_save_account=p.imported_save_account,story_start=p.story_start});
             Directory.Move(tmp,dir);
         }
         public ProfileCopy ReadCopy(string id,string where){
@@ -228,11 +243,17 @@ namespace GtavxrSuite {
         // Put a kept copy back as the profile's saves + VR settings. The current state is kept in the history first.
         public void RestoreCopy(string id,string where,string historyTag){
             var c=ReadCopy(id,where);if(c==null)throw new InvalidDataException("COPY_MISSING");
-            string src=SafeFs.Under(CopyDir(id,where),"user");UserTree.Verify(src,c.user);
+            string src=SafeFs.Under(CopyDir(id,where),"user");
             var p=Profile(id);
-            KeepCopy(p,"history/"+historyTag,historyTag);
-            UserTree.Mirror(src,c.user,UserDir(id));UserTree.Verify(UserDir(id),c.user);
-            p.user=c.user;
+            bool storyOnly=c.story_user_only||EmbeddedRelease.UsesStoryData(p.version);
+            var files=storyOnly?c.user.Where(f=>UserTree.IsStoryData(f.relative)).ToList():c.user;
+            UserTree.Verify(src,files);
+            KeepCopy(p,"history/"+historyTag,historyTag,storyOnly);
+            UserTree.Mirror(src,files,UserDir(id),storyOnly);UserTree.Verify(UserDir(id),files);
+            if(storyOnly)files.AddRange(p.user.Where(f=>!UserTree.IsStoryData(f.relative)));
+            p.user=files;
+            p.imported_save_account=c.imported_save_account;
+            p.story_start=c.story_start;
             string vr=SafeFs.Under(CopyDir(id,where),"vr-settings.ini");
             if(c.has_vr_settings&&File.Exists(vr)){File.Copy(vr,VrSettingsFile(id),true);p.has_vr_settings=true;}
             else{if(File.Exists(VrSettingsFile(id)))File.Delete(VrSettingsFile(id));p.has_vr_settings=false;}

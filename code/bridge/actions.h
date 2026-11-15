@@ -43,7 +43,7 @@ class Actions {
     gx_haptic::HapticPublication hapticPublication;
     uint32_t activeMask=0;
 public:
-    uint32_t optionalProfilesRejected=0; // 167-neural A2: bit p = profile p refused by the runtime
+    uint32_t unsupportedProfiles=0; // Bit p corresponds to kProfiles[p].
 private:
     uint64_t sequence=0;
     static void ok(XrResult r,const char*where) {
@@ -80,8 +80,9 @@ public:
         gripPose=make("hand_pose",XR_ACTION_TYPE_POSE_INPUT);
         aimPose=make("aim_pose",XR_ACTION_TYPE_POSE_INPUT);
         rumble=make("native_rumble",XR_ACTION_TYPE_VIBRATION_OUTPUT);
-        // 167-neural A2: Touch first and required (the source-v16 bindings, same order), then Index / Vive / khr simple as
-        // optional suggestions (interaction_profiles.h). The right System button belongs to the runtime on every profile.
+        // Suggest each controller profile independently. The runtime may leave actions unbound
+        // or assign its own bindings. Lack of a suggested profile does not prevent headset rendering.
+        unsupportedProfiles=0;
         const XrAction slots[gx_profiles::SLOT_COUNT]={stick,trigger,grip,click,primary,secondary,menu,gripPose,aimPose,rumble};
         for(unsigned p=0;p<gx_profiles::kProfileCount;++p){
             const gx_profiles::Profile&profile=gx_profiles::kProfiles[p];std::vector<XrActionSuggestedBinding> bindings;
@@ -93,7 +94,8 @@ public:
             b.interactionProfile=path(profile.path);
             b.countSuggestedBindings=uint32_t(bindings.size());b.suggestedBindings=bindings.data();
             const XrResult r=suggest(instance,&b);
-            if(profile.required)ok(r,"TouchBindings");else if(XR_FAILED(r))optionalProfilesRejected|=1u<<p;
+            if(r==XR_ERROR_PATH_UNSUPPORTED)unsupportedProfiles|=1u<<p;
+            else ok(r,profile.path);
         }
         XrSessionActionSetsAttachInfo a{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};a.countActionSets=1;a.actionSets=&set;
         ok(attach(session,&a),"Attach"); // exactly once, before BeginSession.
@@ -113,16 +115,20 @@ public:
         s.countActiveActionSets=1;s.activeActionSets=&active;
         const auto r=sync(session,&s);if(r==XR_SESSION_NOT_FOCUSED){stop_rumble();return out;}ok(r,"Sync");
         synced=true;
+        unsigned clickHands=0;
         for(unsigned h=0;h<2;++h){
             XrActionStateGetInfo g{XR_TYPE_ACTION_STATE_GET_INFO};g.subactionPath=hands[h];
             auto mark=[&](XrBool32 a){if(a)out.active_hands|=1u<<h;};
             auto f=[&](XrAction a){g.action=a;XrActionStateFloat v{XR_TYPE_ACTION_STATE_FLOAT};ok(scalar(session,&g,&v),"Float");mark(v.isActive);return v.isActive?v.currentState:0.f;};
-            auto b=[&](XrAction a,uint32_t mask){g.action=a;XrActionStateBoolean v{XR_TYPE_ACTION_STATE_BOOLEAN};ok(boolean(session,&g,&v),"Boolean");mark(v.isActive);if(v.isActive&&v.currentState)out.buttons|=mask;};
+            auto b=[&](XrAction a,uint32_t mask){g.action=a;XrActionStateBoolean v{XR_TYPE_ACTION_STATE_BOOLEAN};ok(boolean(session,&g,&v),"Boolean");mark(v.isActive);if(v.isActive&&v.currentState)out.buttons|=mask;return v.isActive!=0;};
             g.action=stick;XrActionStateVector2f v{XR_TYPE_ACTION_STATE_VECTOR2F};ok(vector(session,&g,&v),"Vector");mark(v.isActive);
             if(v.isActive){out.stick[h][0]=v.currentState.x;out.stick[h][1]=v.currentState.y;}
             out.trigger[h]=f(trigger);out.grip[h]=f(grip);
-            b(primary,h?GX_A:GX_X);b(secondary,h?GX_B:GX_Y);b(click,h?GX_RCLICK:GX_LCLICK);if(!h)b(menu,GX_MENU);
+            b(primary,h?GX_A:GX_X);b(secondary,h?GX_B:GX_Y);
+            if(b(click,h?GX_RCLICK:GX_LCLICK))clickHands|=1u<<h;
+            if(!h)b(menu,GX_MENU);
         }
+        if(clickHands==3)out.reserved|=GX_INPUT_BOTH_CLICKS;
         activeMask=out.active_hands;return out;
     }
     bool native_rumble(float heavy,float light){

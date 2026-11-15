@@ -4,6 +4,7 @@
 enum GxButton {
     GX_A=1, GX_B=2, GX_X=4, GX_Y=8, GX_LCLICK=16, GX_RCLICK=32, GX_MENU=64
 };
+enum { GX_INPUT_STEAMVR=1, GX_INPUT_BOTH_CLICKS=2 };
 #pragma pack(push, 8)
 struct GxInput {
     uint32_t size, version, active_hands, buttons;

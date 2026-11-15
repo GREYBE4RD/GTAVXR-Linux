@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using Microsoft.Win32;
+using System.Security.Principal;
 
 namespace GtavxrSuite {
     // An OpenXR runtime manifest as Windows registers it, read without loading anything.
@@ -90,11 +91,27 @@ namespace GtavxrSuite {
             if(String.IsNullOrEmpty(m))return new XrRuntime{error="XR_NO_ACTIVE_RUNTIME"};
             return Inspect(m,active);
         }
+        internal static bool IsAdministrator(){
+            using(var identity=WindowsIdentity.GetCurrent())
+                return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
+        internal static XrRuntime ResolveForPlay(string choice,string active,bool administrator){
+            var runtime=Resolve(choice,active);
+            // The bundled Windows loader ignores XR_RUNTIME_JSON when the child inherits elevation.
+            if(administrator && runtime.error==null && !runtime.active)
+                runtime.error="XR_ELEVATED_RUNTIME_MISMATCH";
+            return runtime;
+        }
+
         public static string Name(string manifest,string runtimeName){
-            string n=((manifest??"")+" "+(runtimeName??"")).ToLowerInvariant();
+            // The library may be stored in any parent directory. A directory
+            // labelled SteamVR (or Meta) must not select a different runtime.
+            string file=Path.GetFileName(manifest??"");
+            string n=(file+" "+(runtimeName??"")).ToLowerInvariant();
             if(n.Contains("virtual desktop")||n.Contains("virtualdesktop"))return "Virtual Desktop";
             if(n.Contains("oculus")||n.Contains("meta"))return "Meta Quest Link";
-            if(n.Contains("steamvr"))return "SteamVR";
+            if(n.Contains("steamvr")||file.StartsWith("steamxr_",StringComparison.OrdinalIgnoreCase))return "SteamVR";
             if(!String.IsNullOrEmpty(runtimeName))return runtimeName;
             return String.IsNullOrEmpty(manifest)?null:Path.GetFileNameWithoutExtension(manifest);
         }

@@ -44,6 +44,45 @@ namespace GtavxrSuite {
             return s;
         }
         public bool Pending{get{return File.Exists(JournalPath);}}
+        internal ApplyJournal PendingOperation() {
+            if(!Pending)return null;
+            var journal=Json.Read<ApplyJournal>(JournalPath);
+            if(journal==null||journal.schema!="gtavxr-suite2-apply-v1")
+                throw new InvalidDataException("Invalid game recovery journal.");
+            journal.game_dir=SafeFs.Root(journal.game_dir);
+            return journal;
+        }
+        internal string PendingGame { get { var journal=PendingOperation();return journal==null?null:journal.game_dir; } }
+
+        internal void Relocate(string target) {
+            target=SafeFs.Root(target);
+            using(var library=GameScope.Acquire(env.DataRoot))
+                RelocateOwned(target);
+        }
+
+        void RelocateOwned(string target) {
+            if(Pending||new PlaySession(env).Unfinished().Count!=0)
+                throw new InvalidOperationException("RECOVERY_REQUIRED");
+            var state=State();
+            if(state==null||String.Equals(state.game_dir,target,StringComparison.OrdinalIgnoreCase))return;
+            string previous=SafeFs.Root(state.game_dir);
+            if(!new DriveInfo(Path.GetPathRoot(previous)).IsReady)
+                throw new IOException("Reconnect the previous GTA drive before changing folders: "+previous);
+            if(Directory.Exists(previous))
+                throw new IOException("The previous GTA folder is still present. Uninstall GTAVXR from it first: "+previous);
+            using(var scope=GameScope.Acquire(target)){
+                if(new PlaySession(env).GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                if(Directory.Exists(previous)||Pending||new PlaySession(env).Unfinished().Count!=0)
+                    throw new InvalidOperationException("RECOVERY_REQUIRED");
+                var version=new Library(env).Version(state.version);
+                if(version==null)throw new InvalidDataException("VERSION_MISSING");
+                LegacyGamePolicy.VerifyFiles(target,env.RetailOverride??version.retail);
+                foreach(var file in state.files)
+                    SafeFs.AssertFile(SafeFs.Under(target,file.path),file.sha256,file.bytes);
+                state.game_dir=target;
+                Json.Atomic(StatePath,state);
+            }
+        }
 
         public static List<FileRef> Desired(VersionManifest v,IEnumerable<ModManifest> mods){
             var list=new List<FileRef>();var owner=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
@@ -100,7 +139,11 @@ namespace GtavxrSuite {
             }
             foreach(var f in owned.Values)if(!want.Contains(f.path))j.removes.Add(f);
             foreach(var f in j.adds)if(!blobs.Has(f.sha256,f.bytes))throw new InvalidDataException("A stored file is missing: "+f.path+". Repair the library.");
-            SafeFs.Budget(env.DataRoot,j.adds.Sum(f=>f.bytes)*2);
+            if(j.adds.Count>0){
+                bool sameVolume=String.Equals(Path.GetPathRoot(game),Path.GetPathRoot(env.DataRoot),StringComparison.OrdinalIgnoreCase);
+                long copies=j.adds.Where(f=>!sameVolume||!Blobs.UsesContentLink(f)).Sum(f=>f.bytes);
+                SafeFs.Budget(game,copies);
+            }
             return j;
         }
 
@@ -130,8 +173,8 @@ namespace GtavxrSuite {
         }
         public void Uninstall(Action<string,int,int> progress){Apply(null,new List<ModManifest>(),progress);}
         public void Recover(Action<string,int,int> progress){
-            if(!Pending)return;
-            Run(Json.Read<ApplyJournal>(JournalPath),progress);
+            var journal=PendingOperation();
+            if(journal!=null)Run(journal,progress);
         }
 
         private void Run(ApplyJournal j,Action<string,int,int> progress){

@@ -38,7 +38,15 @@
             demand(index<eye.images.size(),"XR_IMAGE_INDEX");auto*target=eye.images[index].texture;demand(target,"XR_NULL_IMAGE");
             D3D11_TEXTURE2D_DESC d{};target->GetDesc(&d);demand(shaped(d,targetWidth,targetHeight)&&source!=target,"XR_TARGET_SHAPE_OR_ALIAS");
             ComPtr<ID3D11Device> target_device;target->GetDevice(&target_device);demand(target_device.Get()==device.Get(),"XR_TARGET_DEVICE");
-            perf147.gpu(context.Get(),flat?"flat_copy":"eye_copy",int(e),flat?0:-1,[&](){if(!flat&&eyeChain.active())present_eye(e,gen,source,target);else swap_copy(target,source);});context->Flush();health("capture_after");
+            perf147.gpu(context.Get(),flat?"flat_copy":"eye_copy",int(e),flat?0:-1,[&](){
+                if(!flat&&eyeChain.active())present_eye(e,gen,source,target);
+                else swap_copy(target,source,0,0,nullptr,false,!flat&&steamVrInput);
+            });
+            if(!flat&&steamVrInput&&worldProbePairs<6&&(worldProbePairs==0||frame%120==0)){
+                worldProbe[e].Queue(device.Get(),context.Get(),source,target,true,frame,generation);
+                if(e==1)++worldProbePairs;
+            }
+            context->Flush();health("capture_after");
             // First pair + four spaced pairs only; never continuous GPU readback.
             // These frame IDs also have the existing pose telemetry (multiples of120).
             if(!flat&&first_image&&(submitted==0||frame==120||frame==1200||frame==2400||frame==3600))first_image(source,e);

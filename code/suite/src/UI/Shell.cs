@@ -127,6 +127,42 @@ namespace GtavxrSuite {
             buttons.HorizontalAlignment=HorizontalAlignment.Right;buttons.Margin=new Thickness(0,8,0,0);
             ShowOverlay(Card(U.Col(10,U.Text(title,24,Theme.Text,true,FontWeights.SemiBold),U.Text(body,15,Theme.Mist),buttons)));
         }
+        internal void ChooseDataLocation(string setupGame=null){
+            if(S.Busy||S.Recovery||!S.Env.ManagedLocation)return;
+            using(var d=new System.Windows.Forms.FolderBrowserDialog{
+                Description=L.S("set.data.pick"),ShowNewFolderButton=true}){
+                if(d.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return;
+                string target=System.IO.Path.Combine(d.SelectedPath,"GTAVXR Suite");
+                Confirm(L.S("set.data"),L.F("set.data.confirm",target),L.S("set.data.copy"),()=>
+                    RunTask(L.S("set.data.progress"),()=>{
+                        new DataLocation(Env.DefaultDataRoot()).CopyAndSelect(S.Env,target,setupGame);
+                        return null;
+                    },null,()=>{
+                        MessageBox.Show(Window,L.F("set.data.done",target),L.S("set.data"));
+                        Window.Close();
+                    }),false);
+            }
+        }
+        internal void ImportStorySaves(string profileId){
+            if(S.Busy||S.Recovery)return;
+            var picker=new Microsoft.Win32.OpenFileDialog{Filter="GTAVXR profile (profile.json)|profile.json",
+                FileName="profile.json",CheckFileExists=true};
+            if(picker.ShowDialog()!=true)return;
+            Guard(()=>{
+                string source=System.IO.Path.GetDirectoryName(picker.FileName);
+                string profiles=System.IO.Path.GetDirectoryName(source);
+                if(!String.Equals(System.IO.Path.GetFileName(profiles),"profiles",StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(L.S("save.merge.external.hint"));
+                string library=System.IO.Path.GetDirectoryName(profiles);
+                string id=System.IO.Path.GetFileName(source);
+                Ids.Check(id);
+                Confirm(L.S("save.merge.external"),picker.FileName,L.S("yes"),
+                    ()=>RunTask(L.S("save.merge.external"),()=>{
+                        S.Imp.MergeStorySaves(profileId,library,id);
+                        return L.S("ok");
+                    }),false);
+            });
+        }
         public void Info(string title,string body){
             var ok=U.Btn(L.S("ok"),"Primary",CloseOverlay);ok.HorizontalAlignment=HorizontalAlignment.Right;
             ShowOverlay(Card(U.Col(10,U.Text(title,24,Theme.Text,true,FontWeights.SemiBold),U.Text(body,15,Theme.Mist),ok)));
@@ -139,6 +175,13 @@ namespace GtavxrSuite {
             try{a();}catch(Exception e){Info(L.S("err.title"),Explain(e));S.Reload();}
         }
         public static string Explain(Exception e){
+            var disk=e as DiskSpaceException;
+            if(disk!=null){
+                string available=disk.AvailableBytes>=0?L.F("err.space.free",disk.AvailableBytes/1073741824.0):"";
+                return L.F("err.space.volume",disk.Volume.TrimEnd('\\'))+
+                    (available.Length==0?"":"\n"+available)+
+                    (disk.RequiredBytes.HasValue?"\n"+L.F("err.space.required",disk.RequiredBytes.Value/1073741824.0):"");
+            }
             if(e is GameConflictException)return L.S("err.conflict")+"\n"+e.Message;
             string m=e.Message??"";
             if(m=="GAME_RUNNING")return L.S("err.running");
@@ -150,15 +193,24 @@ namespace GtavxrSuite {
             if(m=="CONTENT_PROFILE_TWICE")return L.S("err.content2");
             if(m=="NO_CONTENT_MODS")return L.S("err.nocontent");
             if(m=="RECOVERY_REQUIRED")return L.S("rec.body");
+            if(m.StartsWith("RECOVERY_SAVE_LOCATION_CHANGED:",StringComparison.Ordinal))
+                return L.S("rec.save.path")+"\n"+m.Substring("RECOVERY_SAVE_LOCATION_CHANGED:".Length).Trim();
+            if(m.StartsWith("RECOVERY_GAME_LOCATION_CHANGED:",StringComparison.Ordinal))
+                return L.S("rec.game.path")+"\n"+m.Substring("RECOVERY_GAME_LOCATION_CHANGED:".Length).Trim();
             if(m=="NO_SPACE")return L.S("err.space");
             if(m=="NOT_LEGACY_3889")return L.S("err.retail");
             if(m=="LEGACY_REPO_ONLY")return L.S("err.legacyrepo");
+            if(m=="DATA_LOCATION_OVERLAP")return L.S("set.data.overlap");
+            if(m=="DATA_LOCATION_EXISTS")return L.S("set.data.exists");
+            if(m.StartsWith("DATA_LOCATION_UNAVAILABLE:",StringComparison.Ordinal))return L.S("set.data.missing")+"\n"+m.Substring("DATA_LOCATION_UNAVAILABLE:".Length).Trim();
+            if(m=="DATA_LOCATION_INVALID")return L.S("set.data.invalid");
             if(m=="DATA_PATH_NOT_ANSI")return L.S("err.ansi");
             if(m=="DATA_PATH_TOO_LONG"||m=="DATA_PATH_NOT_LOCAL")return L.S("compat.local_path")+"\n"+m;
             if(m.StartsWith("RETAIL_RESOURCE_MISMATCH:",StringComparison.Ordinal)||
                m.StartsWith("RETAIL_SHADER_BASE_MISMATCH:",StringComparison.Ordinal))return L.S("dist.base")+"\n"+m;
             if(m=="XR_RUNTIME:XR_NO_ACTIVE_RUNTIME")return L.S("err.xr.none");
             if(m=="XR_RUNTIME:XR_MANIFEST_MISSING")return L.S("err.xr.missing");
+            if(m=="XR_RUNTIME:XR_ELEVATED_RUNTIME_MISMATCH")return L.S("err.xr.elevated");
             if(m.StartsWith("XR_RUNTIME:"))return L.S("err.xr.bad")+"\n"+m.Substring("XR_RUNTIME:".Length);
             if(m.StartsWith("File identity mismatch: "))return L.S("err.identity")+"\n"+m.Substring("File identity mismatch: ".Length);
             if(m=="ARCHIVE_PASSWORD")return L.S("err.password");
@@ -184,7 +236,7 @@ namespace GtavxrSuite {
             Action paint=null;
             paint=()=>{
                 vrow.Children.Clear();srow.Children.Clear();
-                foreach(var v in versions){string id=v.id;var b=U.Btn(v.build+" "+v.Title(L.Lang),vsel==id?"Primary":"Btn",()=>{vsel=id;paint();});b.Margin=new Thickness(0,0,8,8);vrow.Children.Add(b);}
+                foreach(var v in versions){string id=v.id;var b=U.Btn(v.DisplayTitle(L.Lang),vsel==id?"Primary":"Btn",()=>{vsel=id;paint();});b.Margin=new Thickness(0,0,8,8);vrow.Children.Add(b);}
                 var opts=new System.Collections.Generic.List<Tuple<string,string>>{Tuple.Create("copy",L.S("new.saves.copy")),Tuple.Create("fresh",L.S("new.saves.fresh"))};
                 if(S.Selected!=null)opts.Add(Tuple.Create("dup",L.F("new.saves.dup",S.Selected.name)));
                 foreach(var o in opts){string m=o.Item1;var b=U.Btn(o.Item2,mode==m?"Primary":"Btn",()=>{mode=m;paint();});b.Margin=new Thickness(0,0,8,8);srow.Children.Add(b);}
@@ -228,7 +280,7 @@ namespace GtavxrSuite {
             foreach(var p in S.Profiles.Where(x=>x.test)){
                 var v=S.Version(p.version);bool works=m.WorksWith(v);
                 string pid=p.id;
-                var row=U.Btn(p.name+"  ·  "+(v==null?"—":v.build+" "+v.Title(L.Lang))+(works?"":"  ·  "+L.S("mods.no.version")),"Btn",()=>{
+                var row=U.Btn(p.name+"  ·  "+(v==null?"—":v.DisplayTitle(L.Lang))+(works?"":"  ·  "+L.S("mods.no.version")),"Btn",()=>{
                     CloseOverlay();
                     Guard(()=>{var q=S.Lib.Profile(pid);if(!q.mods.Contains(m.id))q.mods.Add(m.id);S.Lib.SaveProfile(q);S.Reload();S.Select(pid);
                         PlayView.EditorOpen=true;PlayView.EditorTab="mods";Section="play";Refresh();Toast(L.F("try.ready",q.name));});
@@ -246,12 +298,12 @@ namespace GtavxrSuite {
         public void Promote(Profile tp){
             var targets=S.Profiles.Where(x=>!x.test&&x.id!=tp.id).ToList();
             var v=S.Version(tp.version);var mods=S.ActiveMods(tp);
-            string what=(v==null?"—":v.build+" "+v.Title(L.Lang))+(mods.Count>0?" + "+String.Join(", ",mods.Select(ShortName)):"");
+            string what=(v==null?"—":v.DisplayTitle(L.Lang))+(mods.Count>0?" + "+String.Join(", ",mods.Select(ShortName)):"");
             if(targets.Count==0){Info(L.S("pr.title"),L.S("pr.none"));return;}
             var list=new StackPanel();
             foreach(var t in targets){
                 var tv=S.Version(t.version);string tid=t.id,tname=t.name;
-                var b=U.Btn(t.name+"  ·  "+(tv==null?"—":tv.build+" "+tv.Title(L.Lang)),"Btn",()=>Confirm(L.S("pr.title"),L.F("pr.q",tname,what),L.S("pr.go"),()=>{
+                var b=U.Btn(t.name+"  ·  "+(tv==null?"—":tv.DisplayTitle(L.Lang)),"Btn",()=>Confirm(L.S("pr.title"),L.F("pr.q",tname,what),L.S("pr.go"),()=>{
                     S.Imp.Promote(tp.id,tid);S.Reload();S.Select(tid);Toast(L.F("pr.done",tname));},false));
                 b.HorizontalContentAlignment=HorizontalAlignment.Left;b.Margin=new Thickness(0,0,0,8);list.Children.Add(b);
             }
@@ -264,7 +316,7 @@ namespace GtavxrSuite {
             var p=S.Lib.Profile(r.profile);if(p==null)return;
             var pv=r.prev_version==null?null:S.Version(r.prev_version);
             var pm=(r.prev_mods??new List<string>()).Select(id=>S.Mod(id)).Where(m=>m!=null).Select(ShortName).ToList();
-            string before=pv==null?L.S("fl.nothing"):pv.build+" "+pv.Title(L.Lang)+(pm.Count>0?" + "+String.Join(", ",pm):"");
+            string before=pv==null?L.S("fl.nothing"):pv.DisplayTitle(L.Lang)+(pm.Count>0?" + "+String.Join(", ",pm):"");
             var lines=new StackPanel();
             Action<int,string,string> line=(kind,text,sub)=>{
                 Color c=kind==0?Theme.Go:kind==1?Theme.Hazard:Theme.Stop;
@@ -299,8 +351,76 @@ namespace GtavxrSuite {
         public void InstallEmbedded(string profileId){
             InstallEmbedded(profileId,new PlayOptions());
         }
+        internal void CheckPublicUpdate(){
+            PublicReleaseChannel.Update update=null;
+            RunTask(L.S("set.update.check"),()=>{
+                update=PublicReleaseChannel.Check();
+                return null;
+            },error=>{
+                Confirm(L.S("set.update"),L.S("set.update.failed")+"\n\n"+error.Message,L.S("set.update.open"),
+                        ()=>System.Diagnostics.Process.Start(PublicReleaseChannel.Releases),false);
+                return true;
+            },()=>{
+                if(update==null){Toast(L.S("set.update.none"));return;}
+                string identity=update.Hash==null?"":"\n\nSHA-256 "+update.Hash;
+                Confirm(L.S("set.update"),L.F("set.update.avail",update.Version)+identity,L.S("set.update.open"),
+                        ()=>{
+                            System.Diagnostics.Process.Start(update.Page);
+                            if(update.Hash!=null)
+                                Confirm(L.S("set.update"),L.S("set.update.verify.hint"),L.S("set.update.verify"),
+                                        ()=>VerifyPublicUpdate(update),false);
+                        },false);
+            });
+        }
+        void VerifyPublicUpdate(PublicReleaseChannel.Update update){
+            var dialog=new Microsoft.Win32.OpenFileDialog{Filter="GTAVXR (*.exe)|*.exe",CheckFileExists=true};
+            if(dialog.ShowDialog()!=true)return;
+            RunTask(L.S("set.update.verify"),()=>{
+                PublicReleaseChannel.VerifyDownload(update,dialog.FileName);
+                return L.S("set.update.verified");
+            });
+        }
+        internal void ReplaceOldPortable(){
+            var dialog=new Microsoft.Win32.OpenFileDialog{Filter="GTAVXR (*.exe)|*.exe",CheckFileExists=true};
+            if(dialog.ShowDialog()!=true)return;
+            string target=dialog.FileName;
+            Confirm(L.S("set.update.portable"),target,L.S("set.update.go"),
+                ()=>RunTask(L.S("set.update.portable"),()=>{SelfInstall.ReplacePublic100(target);return L.S("dist.ready");}),false);
+        }
+        internal void RemoveOldPortable(){
+            var dialog=new Microsoft.Win32.OpenFileDialog{Filter="GTAVXR (*.exe)|*.exe",CheckFileExists=true};
+            if(dialog.ShowDialog()!=true)return;
+            string target=dialog.FileName;
+            if(String.Equals(Path.GetFullPath(target),SelfInstall.InstalledExe(),StringComparison.OrdinalIgnoreCase)){
+                Info(L.S("err.title"),L.S("set.update.legacy.installed"));return;
+            }
+            Confirm(L.S("set.update.legacy.remove"),target,L.S("set.update.legacy.remove"),
+                ()=>RunTask(L.S("set.update.legacy.remove"),()=>{SelfInstall.RemovePublic100(target);return L.S("set.update.legacy.removed");}),true);
+        }
+        internal void RemoveCompletely(){
+            Guard(()=>{
+                var location=new DataLocation(Env.DefaultDataRoot());
+                var roots=CompleteRemoval.Libraries(S.Env,location);
+                var launchers=CompleteRemoval.KnownLaunchers();
+                string destinations=String.Join("\n",roots.Concat(launchers));
+                Confirm(L.S("set.remove.all"),L.S("set.remove.warn")+"\n\n"+destinations,L.S("set.remove.all"),()=>
+                    RunTask(L.S("set.remove.all"),()=>{
+                        if(!CompleteRemoval.KnownLaunchers().SequenceEqual(launchers,StringComparer.OrdinalIgnoreCase))
+                            throw new IOException("The launcher locations changed. Review them again.");
+                        if(S.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                        if(S.Recovery){
+                            string result=S.Session.Recover();
+                            if(result=="GAME_RUNNING")throw new InvalidOperationException(result);
+                        }
+                        CompleteRemoval.RemoveData(S.Env,location,roots);
+                        CompleteRemoval.StartLauncherRemoval();
+                        return null;
+                    },null,()=>{if(Window!=null)Window.Close();}),true);
+            });
+        }
         void InstallEmbedded(string profileId,PlayOptions options){
-            RunTask(L.S("dist.install"),()=>{
+            bool upgrading=new ReleaseMigration(S.Env).Pending||ReleaseMigration.HasPrevious(EmbeddedRelease.VersionId,S.Versions,S.Profiles);
+            RunTask(L.S(upgrading?"dist.upgrade":"dist.install"),()=>{
                 string installed=S.Session.InstallEmbedded(profileId,null,System.Threading.CancellationToken.None,options);
                 var settings=S.Env.LoadSettings();settings.selected_profile=installed;S.Env.SaveSettings(settings);
                 return L.S("dist.ready");
@@ -319,8 +439,15 @@ namespace GtavxrSuite {
         }
         void Play(string profileId,PlayOptions options){
             if(S.Busy)return;
-            S.Busy=true;
             var p=S.Lib.Profile(profileId);var v=S.Version(p.version);
+            if(EmbeddedRelease.HasSessionFixes(p.version)){
+                try{StoryStart.Resolve(p);}
+                catch(InvalidDataException){
+                    PlayView.EditorOpen=true;PlayView.EditorTab="save";
+                    Refresh();Toast(L.S("save.choose"));return;
+                }
+            }
+            S.Busy=true;
             var panel=new PlayingPanel(p,v);
             panel.OnAbort=()=>Task.Factory.StartNew(()=>S.Session.Abort());
             panel.OnClose=()=>S.Session.CloseGame();
@@ -365,6 +492,8 @@ namespace GtavxrSuite {
                 S.Busy=false;S.Reload();
                 if(t.IsFaulted)Info(L.S("err.title"),Explain(t.Exception.GetBaseException()));
                 else if(t.Result=="GAME_RUNNING")Info(L.S("rec.title"),L.S("rec.wait"));
+                else if(t.Result.StartsWith("RECOVERED_PROFILE:",StringComparison.Ordinal))
+                    Info(L.S("rec.title"),L.F("rec.recovered.profile",t.Result.Substring("RECOVERED_PROFILE:".Length)));
                 else Toast(L.S("rec.ok"));
             })));
         }
@@ -377,18 +506,20 @@ namespace GtavxrSuite {
                 stale=S.Versions.Where(v=>importable.Contains(v.source_name)&&S.Imp.ContractStale(v)).Select(v=>v.source_name).Distinct().ToList();}catch(Exception){return;}
             if(fresh.Count+stale.Count==0)return;
             S.Busy=true;
-            Func<List<string>,List<string>> import=list=>{var names=new List<string>();foreach(var r in list){try{var v=S.Imp.ImportRelease(r,null);names.Add(v.build+" "+v.Title(L.Lang));}catch(Exception){}}return names;};
+            Func<List<string>,List<string>> import=list=>{var names=new List<string>();foreach(var r in list){try{var v=S.Imp.ImportRelease(r,null);names.Add(v.DisplayTitle(L.Lang));}catch(Exception){}}return names;};
             Task.Factory.StartNew(()=>Tuple.Create(import(fresh),import(stale)))
                 .ContinueWith(t=>Root.Dispatcher.BeginInvoke((Action)(()=>{S.Busy=false;S.Reload();if(t.IsFaulted)return;
                     if(t.Result.Item1.Count>0)Toast(L.F("dev.newversion",String.Join(", ",t.Result.Item1)));
                     if(t.Result.Item2.Count>0)Toast(L.F("dev.refreshed",String.Join(", ",t.Result.Item2)));})));
-        }        public void RunTask(string title,Func<string> work,Func<Exception,bool> handled=null){
+        }        public void RunTask(string title,Func<string> work,Func<Exception,bool> handled=null,Action onSuccess=null){
             if(S.Busy)return;S.Busy=true;
             var panel=U.Col(12,U.Text(title,26,Theme.Text,true,FontWeights.SemiBold),new ProgressBar{Height=4,IsIndeterminate=true,Foreground=Theme.B(Theme.Sign),Background=Theme.B(Theme.Flap),BorderThickness=new Thickness(0),Width=420});
             panel.HorizontalAlignment=HorizontalAlignment.Center;panel.VerticalAlignment=VerticalAlignment.Center;
             ShowOverlay(panel,false);
             Task.Factory.StartNew(work).ContinueWith(t=>Root.Dispatcher.BeginInvoke((Action)(()=>{
-                S.Busy=false;CloseOverlay();S.Reload();
+                S.Busy=false;CloseOverlay();
+                if(!t.IsFaulted&&onSuccess!=null){onSuccess();return;}
+                S.Reload();
                 if(t.IsFaulted){
                     var error=t.Exception.GetBaseException();
                     if(handled==null||!handled(error))Info(L.S("err.title"),Explain(error));
@@ -398,7 +529,7 @@ namespace GtavxrSuite {
     }
 
     public static class SuiteApp {
-        public const string Version="1.0";
+        public const string Version="1.0.2";
         static void EnsureApp(){if(Application.Current==null){var app=new Application{ShutdownMode=ShutdownMode.OnMainWindowClose};app.Resources.MergedDictionaries.Add(Theme.Resources());}}
         public static Window CreateWindow(AppState state,Shell shell){
             var w=new Window{Title="GTAVXR",Width=1280,Height=860,MinWidth=1040,MinHeight=700,Background=Theme.B(Theme.Terminal),Content=shell.Root,
@@ -423,16 +554,20 @@ namespace GtavxrSuite {
         }
         public static int Start(string library=null){
             EnsureApp();var app=Application.Current;
+            bool created;
+            using(var single=new System.Threading.Mutex(true,"Local\\GTAVXR_Suite2",out created)){
+            if(!created){MessageBox.Show(L.Lang=="en"?"GTAVXR is already open.":"GTAVXR ya está abierto.","GTAVXR");return 0;}
             Env env;
             try{
-                string path=library==null?Env.DefaultDataRoot():SafeFs.Root(library);
+                string path=library==null?ResolveDataLocation():SafeFs.Root(library);
+                if(path==null)return 0;
                 string problem=library==null?null:PlatformCompatibility.SessionPathProblem(path);
                 if(problem!=null)throw new InvalidDataException(problem);
                 env=Env.Product(path);
+                env.ManagedLocation=library==null;
             }
-            catch(Exception e){MessageBox.Show(e.Message,"GTAVXR");return 1;}
-            bool created;var single=new System.Threading.Mutex(true,"Local\\GTAVXR_Suite2",out created);
-            if(!created){MessageBox.Show(L.Lang=="en"?"GTAVXR is already open.":"GTAVXR ya está abierto.","GTAVXR");return 0;}
+            catch(Exception e){L.Lang=System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName=="es"?"es":"en";MessageBox.Show(Shell.Explain(e),"GTAVXR");return 1;}
+
             var state=new AppState(env);
             var shell=new Shell(state);
             var w=CreateWindow(state,shell);
@@ -441,7 +576,30 @@ namespace GtavxrSuite {
             refresh.Tick+=(o,e)=>{if(!state.Busy&&w.IsActive){bool vd=state.RuntimeName!=null&&XrRuntimes.Running(state.RuntimeName)==true;var lease=state.Env.DevHost?PlayLease.Holder(state.Env.DevRepo):null;
                 if(vd!=state.StreamerRunning||((lease==null)!=(state.Lease==null)))state.Reload();}};
             refresh.Start();
-            app.Run(w);GC.KeepAlive(single);return 0;
+            app.Run(w);return 0;
+            }
+        }
+
+        static string ResolveDataLocation(){
+            var location=new DataLocation(Env.DefaultDataRoot());
+            try{return location.Resolve();}
+            catch(InvalidDataException error){if(error.Message!="DATA_LOCATION_INVALID")throw;return LocateData(location,error);}
+            catch(IOException error){
+                if(!error.Message.StartsWith("DATA_LOCATION_UNAVAILABLE",StringComparison.Ordinal))throw;
+                return LocateData(location,error);
+            }
+        }
+
+        static string LocateData(DataLocation location,Exception error) {
+                L.Lang=System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName=="es"?"es":"en";
+                string question=L.Lang=="es"?"¿Quieres localizar una biblioteca existente?":"Do you want to locate an existing Suite library?";
+                if(MessageBox.Show(Shell.Explain(error)+"\n\n"+question,"GTAVXR",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)
+                    return null;
+                using(var picker=new System.Windows.Forms.FolderBrowserDialog{ShowNewFolderButton=false}){
+                    if(picker.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return null;
+                    location.SelectExisting(picker.SelectedPath);
+                    return location.Resolve();
+                }
         }
     }
 }

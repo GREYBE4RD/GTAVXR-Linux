@@ -6,12 +6,66 @@ using System.Threading;
 
 namespace GtavxrSuite {
     // The Suite installs and updates itself: one EXE in %LOCALAPPDATA%\Programs\GTAVXR, shortcuts in Start and on the Desktop.
-    // Updates come from a local channel folder (the development pipeline publishes builds there); no internet download.
+    // The developer-only channel is separate from public release discovery.
     public static class SelfInstall {
+        const string Public100Hash="ABB7544718CC7D33CDA7891AF6B81654615D992D924CB55D935B5D5613132613";
         public static string InstallDir(){return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","GTAVXR");}
         public static string InstalledExe(){return Path.Combine(InstallDir(),"GTAVXR.exe");}
         public static bool RunningInstalled(){return String.Equals(Path.GetFullPath(Program.SelfPath),Path.GetFullPath(InstalledExe()),StringComparison.OrdinalIgnoreCase);}
         public static bool Installed(){return File.Exists(InstalledExe());}
+
+        internal static bool IsPublic100(string path){
+            SafeFs.NoLinks(path);
+            var file=new FileInfo(path);
+            return file.Exists&&file.Length==25437184&&SafeFs.Hash(path)==Public100Hash;
+        }
+
+        internal static void RefreshInstalledLauncher(){
+            if(!RunningInstalled()&&IsPublic100(InstalledExe()))ReplacePublic100(InstalledExe());
+        }
+
+        internal static void ReplacePublic100(string path){
+            path=Path.GetFullPath(path);
+            if(!IsPublic100(path))throw new InvalidDataException("The selected file is not the original GTAVXR 1.0.0 launcher.");
+            var current=new FileInfo(Program.SelfPath);
+            string hash=SafeFs.Hash(current.FullName);
+            string temporary=Path.Combine(Path.GetDirectoryName(path),".gtavxr-update-"+Ids.New()+".tmp");
+            try{
+                SafeFs.CopyNew(current.FullName,temporary,hash,current.Length);
+                if(!IsPublic100(path))throw new IOException("The selected launcher changed: "+path);
+                File.Replace(temporary,path,null);
+                SafeFs.AssertFile(path,hash,current.Length);
+            }finally{
+                if(File.Exists(temporary))SafeFs.DeleteName(temporary);
+            }
+        }
+
+        internal static void RemovePublic100(string path){
+            if(!IsPublic100(path))throw new InvalidDataException("The selected file is not the original GTAVXR 1.0.0 launcher.");
+            SafeFs.DeleteName(path);
+            if(File.Exists(path))throw new IOException("Could not remove: "+path);
+        }
+
+        internal static void RemoveOwnShortcuts(string installed,System.Collections.Generic.IEnumerable<string> targets){
+            foreach(string directory in targets.Where(p=>!String.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase)){
+                string path=SafeFs.Under(directory,"GTAVXR.lnk");
+                if(!File.Exists(path))continue;
+                var type=Type.GetTypeFromProgID("WScript.Shell");
+                if(type==null)throw new IOException("Could not verify shortcut: "+path);
+                dynamic shell=Activator.CreateInstance(type);
+                dynamic link=null;
+                try{
+                    link=shell.CreateShortcut(path);
+                    string destination=link.TargetPath;
+                    if(!String.Equals(destination,installed,StringComparison.OrdinalIgnoreCase))continue;
+                    SafeFs.DeleteName(path);
+                    if(File.Exists(path))throw new IOException("Could not remove shortcut: "+path);
+                }finally{
+                    if(link!=null)System.Runtime.InteropServices.Marshal.FinalReleaseComObject(link);
+                    System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+                }
+            }
+        }
 
         // Copy this EXE into place and create the shortcuts. Returns the installed path.
         public static string Install(string targetDir,string startMenu,string desktop){

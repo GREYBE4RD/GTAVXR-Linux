@@ -30,45 +30,52 @@
         const XrCompositionLayerBaseHeader*layers[16]={ptr};unsigned count=submit?1:0;
         const bool world=submit&&!panel&&!scopePanel.active;
         XrCompositionLayerQuad fadeQuad{XR_TYPE_COMPOSITION_LAYER_QUAD}; // build167 item 4: right above the world
-        if(world&&count<uiMaxLayers&&perf147.cpu("fade_layer",[&](){return fade_layer(fadeQuad);}))
+        const bool haveFade=world&&count<uiMaxLayers&&perf147.cpu("fade_layer",[&](){return fade_layer(fadeQuad);});
+        if(haveFade)
             layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&fadeQuad);
+        XrCompositionLayerQuad subtitles{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        const bool haveSubtitles=world&&count<uiMaxLayers&&perf147.cpu("subtitle_layer",[&](){
+            return native_ui_layer(subtitles,true,0,1,true);
+        });
+        // Reserve one slot while optional HUD rows are composed, then present the subtitle above them.
+        const unsigned layerLimit=uiMaxLayers-(haveSubtitles?1u:0u);
         XrCompositionLayerQuad wrist{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        const bool mapGeometry=world&&count<uiMaxLayers&&perf147.cpu("wrist_layer",[&](){return wrist_layer(wrist,true);});
+        const bool mapGeometry=world&&count<layerLimit&&perf147.cpu("wrist_layer",[&](){return wrist_layer(wrist,true);});
         const bool mapVisible=mapGeometry&&gx_ui_visibility::enabled(uiVisibility,gx_ui_visibility::Map);
         if(mapVisible)layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&wrist);
         XrCompositionLayerQuad wanted{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        if(mapGeometry&&count<uiMaxLayers&&perf147.cpu("wanted_ui_layer",[&](){return wanted_ui_layer(wanted,wrist);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&wanted);
+        if(world&&count<layerLimit&&perf147.cpu("wanted_ui_layer",[&](){return wanted_ui_layer(wanted,mapGeometry?&wrist:nullptr);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&wanted);
         XrCompositionLayerQuad weaponHud{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        if(world&&count<uiMaxLayers&&perf147.cpu("weapon_hud_layer",[&](){return weapon_hud_layer(weaponHud);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&weaponHud);
+        if(world&&count<layerLimit&&perf147.cpu("weapon_hud_layer",[&](){return weapon_hud_layer(weaponHud);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&weaponHud);
         XrCompositionLayerQuad rightHud{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        const bool composeRight=world&&count<uiMaxLayers;
-        if(composeRight&&perf147.cpu("native_ui_layer",[&](){return native_ui_layer(rightHud,false,0,right_element_layer_allowance(count));}))
+        const bool composeRight=world&&count<layerLimit;
+        if(composeRight&&perf147.cpu("native_ui_layer",[&](){return native_ui_layer(rightHud,false,0,right_element_layer_allowance(count+(haveSubtitles?1u:0u)));}))
             layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&rightHud);
         std::array<XrCompositionLayerQuad,gx_ui_element::Count> rightElements{};
         if(composeRight&&!overlayState.visible&&rightPlanFrame==frame&&elementUiFrame==frame&&
            elementUiEye.swap&&!elementUiEye.acquired)for(unsigned k=0;k<rightElements.size();++k){
             rightElements[k].type=XR_TYPE_COMPOSITION_LAYER_QUAD;
             if(!(rightPlan.admittedMask&(1u<<k)))continue;
-            demand(count<uiMaxLayers,"UI_ELEMENT_LAYER_PREFLIGHT");
+            demand(count<layerLimit,"UI_ELEMENT_LAYER_PREFLIGHT");
             if(perf147.cpu("native_ui_element_layer",[&](){return native_ui_element_layer(rightElements[k],k);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&rightElements[k]);
         }
         std::array<XrCompositionLayerQuad,2> handContexts{};
         if(world)for(unsigned h=0;h<handContexts.size();++h){
             handContexts[h].type=XR_TYPE_COMPOSITION_LAYER_QUAD;
-            if(count>=uiMaxLayers){if(frame<=5||frame%120==0)log("UI_GAP reason=hand_layer_budget");break;}
+            if(count>=layerLimit){if(frame<=5||frame%120==0)log("UI_GAP reason=hand_layer_budget");break;}
             if(perf147.cpu("hand_context_layer",[&](){return hand_context_layer(handContexts[h],h);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&handContexts[h]);
         }
         XrCompositionLayerQuad buttonsQuad{XR_TYPE_COMPOSITION_LAYER_QUAD}; // build167 item 3: the wrist buttons card
-        if(world&&count<uiMaxLayers&&perf147.cpu("buttons_layer",[&](){return buttons_layer(buttonsQuad);}))
+        if(world&&count<layerLimit&&perf147.cpu("buttons_layer",[&](){return buttons_layer(buttonsQuad);}))
             layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&buttonsQuad);
         std::array<XrCompositionLayerQuad,8> nativePanels{};
         if(world)for(unsigned n=0;n<nativePanels.size();++n){
             nativePanels[n].type=XR_TYPE_COMPOSITION_LAYER_QUAD;
-            if(count>=uiMaxLayers){if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_layer_budget");break;}
+            if(count>=layerLimit){if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_layer_budget");break;}
             if(perf147.cpu("native_ui_layer",[&](){return native_ui_layer(nativePanels[n],true,n);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&nativePanels[n]);
         }
         XrCompositionLayerQuad options{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        if(world&&count<uiMaxLayers&&overlayState.visible){
+        if(world&&count<layerLimit&&overlayState.visible){
             if(overlayState.version==3){
                 if(perf147.cpu("native_menu_layer",[&](){return native_menu_layer(options);}))layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&options);
             }else{
@@ -80,11 +87,13 @@
             }
         }
         std::array<XrCompositionLayerQuad,4> opticLayers{};unsigned opticCount=0;
-        if(world&&count<uiMaxLayers&&perf147.cpu("scope_optic_layers",[&](){return scope_optic_layers(opticLayers.data(),uiMaxLayers-count,opticCount);}))
+        if(world&&count<layerLimit&&perf147.cpu("scope_optic_layers",[&](){return scope_optic_layers(opticLayers.data(),layerLimit-count,opticCount);}))
             for(unsigned i=0;i<opticCount;++i)layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&opticLayers[i]);
+        if(haveSubtitles)layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&subtitles);
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};ei.displayTime=timing.predictedDisplayTime;ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;ei.layerCount=count;ei.layers=submit?layers:nullptr;
         health("end_before");perf147.seal(context.Get());check(perf147.cpu("xrEndFrame",[&](){return api.EndFrame(session,&ei);}),"EndFrame");begun=false;scopeSources.invalidate();invalidate_scope_optics(!cancel);health("end_after");if(submit){if(scopePanel.active)++scope_frames;else if(panel)++menu_frames;else ++submitted;}
         perf147.cpuRecord(frame,generation,cancel?"cancel":"finish",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());
         LARGE_INTEGER qpc;QueryPerformanceCounter(&qpc);
-        if(!compact_logging||frame<=5||frame%120==0)log("FRAME id="+std::to_string(frame)+" generation="+std::to_string(generation)+" display_time="+std::to_string(timing.predictedDisplayTime)+" qpc="+std::to_string(qpc.QuadPart)+" copies="+std::to_string(copied)+" layers="+std::to_string(ei.layerCount)+" mode="+(scopePanel.active?"SCOPE":panel?"MENU":"WORLD"));
+        if(!compact_logging||frame<=5||frame%120==0)log("FRAME id="+std::to_string(frame)+" generation="+std::to_string(generation)+" display_time="+std::to_string(timing.predictedDisplayTime)+" qpc="+std::to_string(qpc.QuadPart)+" copies="+std::to_string(copied)+" layers="+std::to_string(ei.layerCount)+" mode="+(scopePanel.active?"SCOPE":panel?"MENU":"WORLD")+" projection="+(world?"1":"0")+" subtitles="+(haveSubtitles?"1":"0")+
+            " wanted="+(wanted.subImage.swapchain?"1":"0")+" map="+(mapVisible?"1":"0"));
     }

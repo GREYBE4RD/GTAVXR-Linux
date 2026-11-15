@@ -25,7 +25,8 @@ namespace GtavxrSuite {
             root.Children.Add(Board());
             var p=s.Selected;
             if(EmbeddedRelease.Available&&!s.Demo){
-                var install=U.Btn(L.S("dist.install"),"Primary",()=>shell.InstallEmbedded(p==null?null:p.id));
+                bool update=new ReleaseMigration(s.Env).Pending||ReleaseMigration.HasPrevious(EmbeddedRelease.VersionId,s.Versions,s.Profiles);
+                var install=U.Btn(update?L.S("dist.upgrade"):L.S("dist.install"),"Primary",()=>shell.InstallEmbedded(p==null?null:p.id));
                 install.IsEnabled=s.GameFound&&!s.Busy&&!s.Recovery;
                 install.HorizontalAlignment=HorizontalAlignment.Left;
                 root.Children.Add(install);
@@ -62,7 +63,7 @@ namespace GtavxrSuite {
             // 2.4.0: the chip of the runtime a Play would use (green = its process is up; grey = a runtime without an indicator)
             if(s.Demo)chips.Children.Add(U.Chip(s.RuntimeName??"Virtual Desktop",Theme.Go));
             else if(s.RuntimeName==null)chips.Children.Add(U.Chip(L.S("chip.xr.none"),Theme.C("#E0A030")));
-            else if(s.RuntimeUp==true)chips.Children.Add(U.Chip(s.RuntimeName,Theme.Go));
+            else if(s.RuntimeUp==true)chips.Children.Add(U.Chip(L.F("stub.xr.signal",s.RuntimeName),Theme.Go));
             else if(s.RuntimeUp==null)chips.Children.Add(U.Chip(s.RuntimeName,Theme.Mist));
             else chips.Children.Add(U.Chip(L.F("chip.xr.off",s.RuntimeName),Theme.C("#E0A030")));
             chips.Children.Add(s.GameFound||s.Demo?U.Chip(L.S("chip.game"),Theme.Go):U.Chip(L.S("chip.game.missing"),Theme.Stop));
@@ -80,7 +81,7 @@ namespace GtavxrSuite {
                 var v=s.Version(p.version);var save=s.LatestSave(p);
                 string state=v==null?L.S("state.missing"):(p.test||v.channel=="test")?L.S("state.test"):L.S("state.ready");
                 Color stateInk=v==null?Theme.Stop:(p.test||v.channel=="test")?Theme.Hazard:Theme.Go;
-                string[] vals={p.name,v==null?"—":v.build+" "+v.Title(L.Lang),s.ModsShort(p),save==null?L.S("save.new"):save.mission+" "+Math.Floor(save.percent)+"%",state};
+                string[] vals={p.name,v==null?"—":v.DisplayTitle(L.Lang),s.ModsShort(p),save==null?L.S("save.new"):save.mission+" "+Math.Floor(save.percent)+"%",state};
                 bool on=s.Selected!=null&&s.Selected.id==p.id;
                 var bg=new Border{Background=Theme.B(on?Theme.Selected:Theme.Board),BorderBrush=Theme.B(on?Theme.Sign:Theme.FlapCut),BorderThickness=new Thickness(on?3:0,1,0,0)};
                 Grid.SetRow(bg,r);Grid.SetColumnSpan(bg,5);grid.Children.Add(bg);
@@ -135,7 +136,7 @@ namespace GtavxrSuite {
             var fields=new Grid();for(int i=0;i<4;i++)fields.ColumnDefinitions.Add(new ColumnDefinition());
             string modsMain=mods.Count==0?L.S("f.nomods"):mods.Count==1?(mods[0].kind=="mvga-native"?"MVGA 2.65":mods[0].name):L.F("f.modsn",mods.Count);
             string modsSub=mods.Count==0?(v!=null&&v.mvga=="switch"?"MVGA: off":""):String.Join(" · ",mods.Select(m=>m.kind=="mvga-native"?"Make Visuals Great Again":m.name));
-            Field(fields,0,L.S("f.version"),v==null?"—":v.build+" "+v.Title(L.Lang),v==null?L.S("state.missing"):v.channel=="test"?L.S("f.testv"):L.S("f.stable"));
+            Field(fields,0,L.S("f.version"),v==null?"—":v.DisplayTitle(L.Lang),v==null?L.S("state.missing"):v.channel=="test"?L.S("f.testv"):L.S("f.stable"));
             Field(fields,1,L.S("f.mods"),modsMain,modsSub);
             Field(fields,2,L.S("f.save"),save==null?L.S("save.none"):save.Short(L.Lang),save==null?"":L.Ago(save.written_utc.ToString("o")));
             Field(fields,3,L.S("f.vr"),p.has_vr_settings?L.S("f.vr.title"):L.S("f.vr.default"),L.S("f.vr.own"));
@@ -153,7 +154,7 @@ namespace GtavxrSuite {
             var gateLabel=U.Label(L.S("stub.gate"),Theme.C("#9AA6B3"));DockPanel.SetDock(gateLabel,Dock.Top);sc.Children.Add(gateLabel);
             var view=new Grid{Margin=new Thickness(0,6,0,0),HorizontalAlignment=HorizontalAlignment.Left};
             var gatePic=Assets.Gate(p.image);if(gatePic!=null)view.Children.Add(U.Porthole(gatePic,206,128));
-            var gateNo=new StickerText(v==null?"—":v.build,50){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Bottom,Margin=new Thickness(10,0,0,2)};
+            var gateNo=new StickerText(v==null?"—":v.VersionBadge(),v!=null&&v.embedded_release?39:50){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Bottom,Margin=new Thickness(10,0,0,2)};
             view.Children.Add(gateNo);
             DockPanel.SetDock(view,Dock.Top);sc.Children.Add(view);
             var vt=U.Text((v==null?"":(v.Title(L.Lang)+" · "+(v.channel=="test"?L.S("f.testv"):L.S("f.stable")))).ToUpperInvariant(),12,Theme.C("#9AA6B3"),true);
@@ -231,7 +232,7 @@ namespace GtavxrSuite {
         UIElement VersionTab(Profile p){
             var list=new StackPanel();
             foreach(var v in s.Versions.Where(x=>s.Dev||x.channel!="test"||x.id==p.version)){
-                var title=U.Row(8,U.Text(v.build+" "+v.Title(L.Lang),17,Theme.Text,true,FontWeights.SemiBold));
+                var title=U.Row(8,U.Text(v.DisplayTitle(L.Lang),17,Theme.Text,true,FontWeights.SemiBold));
                 var pill=v.channel=="test"?U.Pill(L.S("state.test"),Theme.Ink,Theme.Hazard):U.Pill(L.S("f.stable"),Theme.Go,Theme.C("#16301A"));pill.Margin=new Thickness(10,2,0,0);pill.VerticalAlignment=VerticalAlignment.Center;title.Children.Add(pill);
                 var notes=v.Notes(L.Lang);
                 var left=U.Col(3,title,U.Text(notes!=null&&notes.Count>0?notes[0]:"",13,Theme.Mist));
@@ -278,6 +279,9 @@ namespace GtavxrSuite {
             if(pm!=null&&(pm.kind=="content-source"||pm.kind=="script")&&p.mods.Contains(pm.id))return Personalize(p,pm);
             PersonalizeMod=null;
             var list=new StackPanel();
+            var library=U.Btn(L.S("modsv.open"),"Btn",()=>{shell.Section="mods";shell.Refresh();});
+            library.HorizontalAlignment=HorizontalAlignment.Left;
+            library.Margin=new Thickness(0,0,0,10);list.Children.Add(library);
             // 2.4.4: what this profile's mods share and what the Suite does about it, before Play
             var conflicts=Conflicts(p,v);if(conflicts!=null)list.Children.Add(conflicts);
             var cards=s.Mods.Where(m=>m.IsCard()).ToList();
@@ -516,18 +520,48 @@ namespace GtavxrSuite {
         UIElement SaveTab(Profile p){
             var list=new StackPanel();
             string user=s.Lib.UserDir(p.id);
-            var saves=Directory.GetFiles(user,"SGTA5*",SearchOption.AllDirectories).Select(SaveInfo.Read).Where(x=>x!=null).OrderByDescending(x=>x.written_utc).Take(5).ToList();
-            if(saves.Count==0)list.Children.Add(Option(U.Text(L.S("save.none"),17,Theme.Text,true,FontWeights.SemiBold),null,true,null));
-            bool first=true;
-            foreach(var sv in saves){
-                var left=U.Col(2,U.Text(sv.Short(L.Lang),17,Theme.Text,true,FontWeights.SemiBold),U.Text((first?L.S("save.latest")+" · ":"")+L.Ago(sv.written_utc.ToString("o")),13,Theme.Mist));
-                list.Children.Add(Option(left,null,first,null));first=false;
+            bool canSelect=EmbeddedRelease.HasSessionFixes(p.version);
+            if(canSelect){
+                list.Children.Add(U.Text(L.S("save.choose"),15,Theme.Text,true,FontWeights.SemiBold));
+                list.Children.Add(StoryChoice(p,null,L.S("save.auto"),null));
+                list.Children.Add(StoryChoice(p,StoryStart.NewStory,L.S("save.fresh"),null));
             }
-            var btns=U.Row(10,U.Btn(L.S("save.copy"),"Btn",()=>shell.Confirm(L.S("save.copy"),L.S("save.copy.q"),L.S("yes"),()=>{s.Imp.ResetSaves(p.id,true);s.Reload();},false)),
-                U.Btn(L.S("save.fresh"),"Ghost",()=>shell.Confirm(L.S("save.fresh"),L.S("save.fresh.q"),L.S("yes"),()=>{s.Imp.ResetSaves(p.id,false);s.Reload();},false)));
+            var saves=StoryStart.Choices(p).Select(file=>new{
+                file,info=SaveInfo.Read(SafeFs.Under(user,file.relative))
+            }).OrderByDescending(row=>row.info==null?DateTime.MinValue:row.info.written_utc)
+                .ThenBy(row=>row.file.relative,StringComparer.OrdinalIgnoreCase).ToList();
+            if(!canSelect&&saves.Count==0)
+                list.Children.Add(Option(U.Text(L.S("save.none"),17,Theme.Text,true,FontWeights.SemiBold),null,true,null));
+            foreach(var row in saves){
+                string name=row.info==null?System.IO.Path.GetFileName(row.file.relative):row.info.Short(L.Lang);
+                string detail=row.file.relative+(row.info==null?"":" · "+L.Ago(row.info.written_utc.ToString("o")));
+                list.Children.Add(canSelect?StoryChoice(p,row.file.relative,name,detail):
+                    Option(U.Col(2,U.Text(name,17,Theme.Text),U.Text(detail,13,Theme.Mist)),null,false,null));
+            }
+            var btns=new WrapPanel();
+            btns.Children.Add(U.Btn(L.S("save.copy"),"Btn",()=>shell.Confirm(L.S("save.copy"),L.S(canSelect?"save.merge.q":"save.copy.q"),
+                L.S("yes"),()=>{shell.RunTask(L.S("save.copy"),()=>{s.Imp.ResetSaves(p.id,true);return L.S("ok");});},false)));
+            if(!canSelect)btns.Children.Add(U.Btn(L.S("save.fresh"),"Ghost",()=>shell.Confirm(L.S("save.fresh"),
+                L.S("save.fresh.q"),L.S("yes"),()=>{s.Imp.ResetSaves(p.id,false);s.Reload();},false)));
+            if(canSelect)btns.Children.Add(U.Btn(L.S("save.merge.external"),"Ghost",()=>shell.ImportStorySaves(p.id)));
             btns.Margin=new Thickness(0,4,0,10);list.Children.Add(btns);
             list.Children.Add(U.Text(L.S("save.hint"),13,Theme.Mist));
             return list;
+        }
+        UIElement StoryChoice(Profile profile,string choice,string label,string detail){
+            bool selected=String.Equals(profile.story_start,choice,StringComparison.OrdinalIgnoreCase);
+            var button=U.Btn(selected?L.S("save.selected"):L.S("save.select"),selected?"Primary":"Btn",
+                ()=>shell.Guard(()=>{
+                    if(s.Busy||s.Recovery)return;
+                    var current=s.Lib.Profile(profile.id);
+                    StoryStart.Select(current,choice);
+                    s.Lib.SaveProfile(current);
+                    s.Reload();
+                }));
+            button.IsEnabled=!selected&&!s.Busy&&!s.Recovery;
+            var text=U.Col(2,U.Text(label,17,Theme.Text,true,FontWeights.SemiBold));
+            if(detail!=null)text.Children.Add(U.Text(detail,13,Theme.Mist));
+            return Option(text,button,selected,null);
         }
         UIElement VrTab(Profile p){
             var list=new StackPanel();

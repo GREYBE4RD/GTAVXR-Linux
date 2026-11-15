@@ -19,6 +19,7 @@ namespace GtavxrSuite {
         public bool dev_mode {get;set;}
         public string dev_repo {get;set;}          // development host only (GTAVXR repository)
         public string selected_profile {get;set;}
+        public string steamvr_menu_key {get;set;}
         public bool first_run_done {get;set;}
     }
 
@@ -35,6 +36,7 @@ namespace GtavxrSuite {
         public string LegacySessionsRoot {get{return legacySessionsRoot??Path.Combine(DevRepo??DefaultRepo,"local-cache","play","sessions");}set{legacySessionsRoot=value;}}
         public string LegacySettingsPath {get{return legacySettingsPath??Path.Combine(DevRepo??DefaultRepo,"local-cache","play","vr-settings.ini");}set{legacySettingsPath=value;}}
         public bool Fixture {get;private set;}
+        internal bool ManagedLocation {get;set;}
         public string[] GameProcessNames {get;set;}
         public IDictionary<string,string> RetailOverride {get;set;}  // fixture-only retail hashes
         // Rockstar launcher handshake folder (game/core/app.cpp WriteExitFile: in-<pid> / out-<pid>) and how long a game that

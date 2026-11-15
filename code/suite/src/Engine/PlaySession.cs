@@ -19,6 +19,14 @@ namespace GtavxrSuite {
         public string phase {get;set;}          // see PlaySession.Phases
         public string native_session {get;set;}
         public List<SaveFileRef> retail_user {get;set;}
+        public string retail_user_dir {get;set;}
+        public string retail_user_identity {get;set;}
+        public string game_dir {get;set;}
+        public string game_dir_identity {get;set;}
+        public bool story_user_only {get;set;}
+        public string story_start {get;set;}
+        public List<SaveFileRef> story_before {get;set;}
+        public List<SaveFileRef> story_staged {get;set;}
         public bool vr_settings_was_present {get;set;}
         public ChildIdentity game {get;set;}
         public bool launch_attempted {get;set;}
@@ -163,6 +171,19 @@ namespace GtavxrSuite {
         }
 
         public SessionRecord Play(string profileId,Action<PlayProgress> progress,PlayOptions options){
+            if(GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+            using(var library=GameScope.Acquire(env.DataRoot))
+            using(var game=GameScope.Acquire(env.GameDir)){
+                string retail=SafeFs.Root(env.UserDataDir);
+                Directory.CreateDirectory(retail);
+                using(var user=GameScope.Acquire(retail))
+                    return PlayOwned(profileId,progress,options,retail,user.Name,game.Name);
+            }
+        }
+
+        SessionRecord PlayOwned(string profileId,Action<PlayProgress> progress,PlayOptions options,string retail,
+                                string retailIdentity,string gameIdentity){
+            if(new ReleaseMigration(env).Pending)throw new InvalidOperationException("An update is unfinished. Select Update GTAVXR to resume.");
             if(Unfinished().Count>0)throw new InvalidOperationException("RECOVERY_REQUIRED");
             if(layer.Pending)throw new InvalidOperationException("RECOVERY_REQUIRED");
             if(GameRunning())throw new InvalidOperationException("GAME_RUNNING");
@@ -173,14 +194,17 @@ namespace GtavxrSuite {
             if(!suiteMode&&!Directory.Exists(Path.GetDirectoryName(env.LegacySettingsPath)))throw new InvalidDataException("LEGACY_REPO_ONLY");
             // the EXE reads the paths it is given with the ANSI API: a Suite data folder that code page cannot spell is refused here
             if(suiteMode&&!AnsiPath(env.DataRoot))throw new InvalidDataException("DATA_PATH_NOT_ANSI");
-            if(v.id==EmbeddedRelease.VersionId&&v.embedded_release){
+            bool compatibility=v.embedded_release&&EmbeddedRelease.UsesStoryData(v.id);
+            var story=compatibility&&EmbeddedRelease.HasSessionFixes(v.id)?StoryStart.Resolve(p):null;
+            if(story!=null&&story.source!=null)
+                UserTree.Verify(lib.UserDir(p.id),new List<SaveFileRef>{story.source});
+            if(compatibility){
                 var pathProblem=PlatformCompatibility.SessionPathProblem(env.DataRoot);
                 if(pathProblem!=null) throw new InvalidDataException(pathProblem);
             }
             var xr=ResolveXr();if(xr.error!=null)throw new InvalidDataException("XR_RUNTIME:"+xr.error);
             if(v.embedded_release){var problem=XrRuntimes.NegotiationProblem(xr);if(problem!=null)throw new InvalidDataException("XR_RUNTIME:"+problem);}
             if(v.embedded_release)RequireInstalledEmbedded(v);
-            bool compatibility=v.id==EmbeddedRelease.VersionId&&v.embedded_release;
             var diagnostics=new List<string>();
             var omitted=new List<string>(options.OmittedMods);
             var inputs=compatibility?CompatibleMods(p,v,options,diagnostics,omitted):ActiveMods(p,v);
@@ -189,11 +213,15 @@ namespace GtavxrSuite {
             if(diagnostics.Count!=0)
                 throw new OptionalComponentException(diagnostics,new PlayOptions { OmittedMods=omitted,
                     GraphicsFallback=graphics==null?null:graphics.Fallback });
+            var retailUser=UserTree.Snapshot(retail,compatibility);
+            SafeFs.Budget(env.DataRoot,retailUser.Sum(f=>f.bytes));
             var prepared=BuildSelection(p,v,inputs,progress);
             var mods=prepared.mods;
             var settingsXml=prepared.settings_xml;
             var r=new SessionRecord{schema="gtavxr-suite2-session-v1",id=DateTime.UtcNow.ToString("yyyyMMddTHHmmss")+"-"+Ids.New().Substring(0,12),profile=p.id,profile_name=p.name,version=v.id,
                 mods=mods.Select(m=>m.id).ToList(),phase="STARTING",started_utc=DateTime.UtcNow.ToString("o"),
+                story_user_only=compatibility,retail_user=retailUser,retail_user_dir=retail,retail_user_identity=retailIdentity,
+                game_dir=SafeFs.Root(env.GameDir),game_dir_identity=gameIdentity,
                 session_mode=v.launch.session_mode,settings_mode=v.launch.settings_mode,runtime_manifest=xr.manifest,runtime_name=xr.name,
                 omitted_mods=omitted.Count==0?null:omitted,isolated_mod_state=omitted.Any(id=>{var mod=lib.Mod(id);return mod==null||mod.kind=="script";})};
             Directory.CreateDirectory(SessionDir(r.id));Save(r);
@@ -225,7 +253,8 @@ namespace GtavxrSuite {
                 Step(progress,"saves",0,0);
                 // 1. Keep the player's normal GTA user folder aside (verified copy).
                 string backup=SafeFs.Under(SessionDir(r.id),"retail-user");
-                r.retail_user=UserTree.Snapshot(env.UserDataDir);UserTree.CopyInto(env.UserDataDir,r.retail_user,backup);UserTree.Verify(backup,r.retail_user);
+                UserTree.CopyInto(retail,r.retail_user,backup);
+                UserTree.Verify(backup,r.retail_user);
                 // the repository's VR settings file is kept aside only for versions that read it (suite mode never touches it)
                 if(r.settings_mode!="suite"){
                     string vrBackup=SafeFs.Under(SessionDir(r.id),"vr-settings-before.ini");
@@ -234,13 +263,14 @@ namespace GtavxrSuite {
                 }else{r.vr_settings=SafeFs.Under(SessionDir(r.id),"vr-settings.ini");}
                 Advance(r,"USER_SAVED");
                 // 2. Put this profile's user folder and VR settings in place.
-                StageProfile(p,v,backup,r.retail_user,settingsXml,r);
+                StageProfile(p,v,backup,r.retail_user,settingsXml,r,story);
                 if(r.script_host)StageOnlineMaps(r,mods.Where(m=>m.kind=="script"));
                 if(compatibility) StageGraphics(r,graphics); else ChooseGraphics(r,v);
                 r.components=Components(r);
                 Advance(r,"USER_STAGED");
                 // 3. Run the game.
                 Step(progress,"launch",0,0);
+                if(v.embedded_release&&EmbeddedRelease.HasSessionFixes(v.id)) RecordContentInputs(r,inputs,mods);
                 Launch(r,p,v,mods,progress);
                 Advance(r,"EXITED");
                 Step(progress,"capture",0,0);
@@ -253,14 +283,14 @@ namespace GtavxrSuite {
                 if(r.test){Step(progress,"revert",0,0);Revert(r);Advance(r,"REVERTED");}
                 r.result="played";r.ended_utc=DateTime.UtcNow.ToString("o");
                 if(lease!=null){lease.Dispose();lease=null;}
-                Advance(r,"CLOSED");
+                CloseRecord(r);
                 return r;
             }catch(Exception e){
                 r.error=e.GetType().Name+": "+e.Message;Save(r);
                 // Before the game started nothing of the profile can have changed: put GTA back now.
                 if(Rank(r.phase)<Rank("LAUNCHED")&&!r.launch_attempted&&!GameRunning()){
                     try{if(Rank(r.phase)>=Rank("USER_SAVED"))RestoreRetail(r);if(r.swapped)SwapOut(r);PutBack(r);if(r.test)Revert(r);r.result="cancelled";r.ended_utc=DateTime.UtcNow.ToString("o");
-                        if(lease!=null){lease.Dispose();lease=null;}Advance(r,"CLOSED");}
+                        if(lease!=null){lease.Dispose();lease=null;}CloseRecord(r);}
                     catch(Exception inner){r.error+=" | restore: "+inner.Message;Save(r);}
                 }
                 throw;
@@ -289,6 +319,21 @@ namespace GtavxrSuite {
         }
 
         private void Advance(SessionRecord r,string phase){r.phase=phase;Save(r);}
+
+        private void CloseRecord(SessionRecord r){
+            Advance(r,"CLOSED");
+            // A durably closed session no longer needs the temporary copy of managed retail files.
+            if(!r.story_user_only||r.retail_user==null)return;
+            try{
+                string backup=SafeFs.Under(SessionDir(r.id),"retail-user");
+                foreach(var file in r.retail_user){
+                    string path=SafeFs.Under(backup,file.relative);
+                    if(File.Exists(path))SafeFs.DeleteName(path);
+                }
+            }catch(IOException error){Trace.TraceWarning("Could not retire session backup: "+error.Message);}
+             catch(UnauthorizedAccessException error){Trace.TraceWarning("Could not retire session backup: "+error.Message);}
+             catch(System.ComponentModel.Win32Exception error){Trace.TraceWarning("Could not retire session backup: "+error.Message);}
+        }
         private static void Step(Action<PlayProgress> p,string step,int done,int total){if(p!=null)p(new PlayProgress{step=step,done=done,total=total});}
 
         // Bridge, trainer and collector live in the Suite (one folder per version); GTAVXR_BRIDGE_PATH points there.
@@ -305,7 +350,8 @@ namespace GtavxrSuite {
         // 2.4.0: the OpenXR runtime of this Play ("auto" = Windows' active runtime now; a chosen manifest otherwise).
         private XrRuntime ResolveXr(){
             var s=env.LoadSettings();
-            return XrRuntimes.Resolve(s.openxr_runtime,env.XrActive!=null?env.XrActive():env.OpenXrManifest);
+            string active=env.XrActive!=null?env.XrActive():env.OpenXrManifest;
+            return XrRuntimes.ResolveForPlay(s.openxr_runtime,active,!env.Fixture&&XrRuntimes.IsAdministrator());
         }
         public static bool AnsiPath(string path){
             var enc=Encoding.GetEncoding(Encoding.Default.CodePage,EncoderFallback.ExceptionFallback,DecoderFallback.ExceptionFallback);
@@ -347,18 +393,34 @@ namespace GtavxrSuite {
             return list;
         }
 
-        private void StageProfile(Profile p,VersionManifest v,string retailBackup,List<SaveFileRef> retail,Dictionary<string,string> settingsXml,SessionRecord r){
+        private void StageProfile(Profile p,VersionManifest v,string retailBackup,List<SaveFileRef> retail,Dictionary<string,string> settingsXml,SessionRecord r,StoryStart story){
             string user=lib.UserDir(p.id);
+            string destination=SessionUserDir(r);
             var files=p.user??new List<SaveFileRef>();
+            if(r.story_user_only)files=files.Where(f=>UserTree.IsStoryData(f.relative)).ToList();
             UserTree.Verify(user,files);
-            // Make the GTA user folder hold exactly the profile's files.
-            UserTree.Mirror(user,files,env.UserDataDir);
+            if(story!=null&&story.choice!=null){
+                r.story_start=story.choice;
+                r.story_before=files.Where(f=>StoryStart.SlotOrBackup(f.relative)).ToList();
+                Save(r);
+                r.story_staged=StoryStart.Stage(user,destination,files,story);
+                Save(r);
+            }else{
+                UserTree.Mirror(user,files,destination,r.story_user_only);
+                if(EmbeddedRelease.HasSessionFixes(v.id)) StageImportedStorySaves(user,destination,files,p.imported_save_account);
+            }
             // GTAVXR needs a windowed 1920x1080 monitor view; take the profile's settings.xml, or the normal one.
-            string settings=SafeFs.Under(env.UserDataDir,"settings.xml");
+            string settings=SafeFs.Under(destination,"settings.xml");
             string source=File.Exists(settings)?settings:(retail.Any(f=>f.relative=="settings.xml")?SafeFs.Under(retailBackup,"settings.xml"):null);
             if(source!=null){
-                string xml=Display.Convert(File.ReadAllText(source));
+                bool adjusted;
+                bool requireStandardShaders=v.embedded_release&&EmbeddedRelease.HasSessionFixes(v.id);
+                string xml=Display.Convert(File.ReadAllText(source),requireStandardShaders,out adjusted);
                 if(v.content=="profile")xml=ContentSources.ApplySettings(xml,settingsXml);   // World of Variety's variety option
+                if(adjusted){
+                    Json.New(SafeFs.Under(SessionDir(r.id),"shader-quality.json"),
+                        new { requested=0, applied=1, reason="LOW_QUALITY_SHADER_SET_UNAVAILABLE" });
+                }
                 File.WriteAllText(settings,xml,new UTF8Encoding(false));
             }
             // VR settings of this profile: versions 125-167 read one fixed file on this PC; a suite-mode version reads this
@@ -368,6 +430,21 @@ namespace GtavxrSuite {
             if(p.has_vr_settings&&File.Exists(mine))File.Copy(mine,vr,true);
             else if(v.vr_settings_seed!=null)blobs.Materialize(v.vr_settings_seed,vr);
             else if(File.Exists(vr))File.Delete(vr);
+        }
+
+        // The offline game reads Default, while retail saves use Profiles/<account>.
+        // Keep existing Default progress and leave the original account files intact.
+        private void StageImportedStorySaves(string user,string destination,List<SaveFileRef> files,string selectedAccount){
+            if(SaveInfo.HasLocalStory(files))return;
+            var accounts=SaveInfo.RetailAccounts(files);
+            if(accounts.Count==0)return;
+            if(accounts.Count>1&&!accounts.Contains(selectedAccount))return;
+            var saves=accounts.Count==1?accounts.Single():accounts[selectedAccount];
+            SafeFs.Budget(destination,saves.Sum(save=>save.bytes));
+            foreach(var save in saves){
+                string target=SafeFs.Under(destination,"Default/"+Path.GetFileName(save.relative));
+                SafeFs.CopyNew(SafeFs.Under(user,save.relative),target,save.sha256,save.bytes);
+            }
         }
 
         // 2.4.2: a script mod that needs the Online map data (Open World Interiors lists "Enable MP Maps") gets "Online maps in
@@ -392,12 +469,24 @@ namespace GtavxrSuite {
             foreach(var m in mods)if(m.args!=null)foreach(string a in m.args)if(!args.Contains(a))args.Add(a);
             if(r.script_host&&!args.Contains(v.script_host_arg))args.Add(v.script_host_arg);
             if(mods.Any(m=>m.kind=="content-native")&&!args.Contains(ContentSources.HeapArg))args.Add(ContentSources.HeapArg);
+            if(v.embedded_release&&EmbeddedRelease.HasSessionFixes(v.id)&&!File.Exists(SafeFs.Under(SessionUserDir(r),"settings.xml"))){
+                // First launch can select a Low hardware preset before it has a settings.xml.
+                args.Add("-shaderQuality");
+                args.Add("1");
+                Json.New(SafeFs.Under(SessionDir(r.id),"shader-quality.json"),
+                    new { applied=1, reason="NO_SAVED_GRAPHICS_SETTINGS" });
+            }
+            if(v.embedded_release&&EmbeddedRelease.HasSessionFixes(v.id)) RecordDisplaySettings(r,"before");
             var psi=new ProcessStartInfo(exe,ProcessText.Join(args)){UseShellExecute=false,WorkingDirectory=game,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             var envv=psi.EnvironmentVariables;
-            foreach(string k in new[]{"GX_DEV_ROOT","SIMXR_DATA_DIR","GTAVXR_DIAGNOSTIC","GTAVXR_SCRIPTS_PATH","GTAVXR_LOADER_PATH","GTAVXR_VR_SETTINGS","GTAVXR_SESSIONS_ROOT","GTAVXR_DLSS_DIR"})
+            foreach(string k in new[]{"GX_DEV_ROOT","SIMXR_DATA_DIR","GTAVXR_DIAGNOSTIC","GTAVXR_SCRIPTS_PATH","GTAVXR_LOADER_PATH","GTAVXR_VR_SETTINGS","GTAVXR_SESSIONS_ROOT","GTAVXR_DLSS_DIR","GTAVXR_STEAMVR_BOOTSTRAP"})
                 if(envv.ContainsKey(k))envv.Remove(k);
             envv["XR_RUNTIME_JSON"]=r.runtime_manifest??env.OpenXrManifest;envv["GTAVXR_USER_PLAY"]="1";envv["GTAVXR_SESSION_DIR"]=native;
+            if(String.Equals(r.runtime_name,"SteamVR",StringComparison.OrdinalIgnoreCase))
+                envv["GTAVXR_STEAMVR_BOOTSTRAP"]="1";
             envv["GTAVXR_BRIDGE_PATH"]=Path.Combine(RuntimeDir(v),"gtavxr_native_openxr.dll");
+            string menuKey=env.LoadSettings().steamvr_menu_key;
+            envv["GTAVXR_STEAMVR_MENU_KEY"]=menuKey=="F7"||menuKey=="F11"||menuKey=="off"?menuKey:"F9";
             // 2.4.0 (167-neural A1): a suite-mode EXE gets every user-play path from here (never a developer folder)
             if(r.session_mode=="suite"){
                 envv["GTAVXR_SESSIONS_ROOT"]=env.Dir("sessions");envv["GTAVXR_VR_SETTINGS"]=r.vr_settings;
@@ -415,6 +504,7 @@ namespace GtavxrSuite {
             foreach(string layerVar in v.launch.disable_layers??new List<string>())envv[layerVar]="1";
             File.WriteAllText(Path.Combine(SessionDir(r.id),"launch.txt"),"\""+exe+"\" "+psi.Arguments+Environment.NewLine,new UTF8Encoding(false));
             Process child=null;NativeFaultCompanion collector=null;string marker=null,exitFile=null;
+            var startup=env.Fixture?null:new StartupTimeline(native);
             var outLog=new StreamWriter(Path.Combine(native,"native-stdout.log"),false,new UTF8Encoding(false));
             var errLog=new StreamWriter(Path.Combine(native,"native-stderr.log"),false,new UTF8Encoding(false));
             try{
@@ -426,7 +516,12 @@ namespace GtavxrSuite {
                     r.launch_attempted=false;Save(r);throw;
                 }
                 lock(gate){running=child;current=r;}
-                child.OutputDataReceived+=(s,e)=>{if(e.Data!=null)lock(outLog)outLog.WriteLine(e.Data);};
+                child.OutputDataReceived+=(s,e)=>{
+                    if(e.Data==null)return;
+                    lock(outLog)outLog.WriteLine(e.Data);
+                    if(startup!=null && e.Data.StartsWith("register slot (0) :",StringComparison.Ordinal))
+                        startup.ScriptRegistrationStarted();
+                };
                 child.ErrorDataReceived+=(s,e)=>{if(e.Data!=null)lock(errLog)errLog.WriteLine(e.Data);};
                 child.BeginOutputReadLine();child.BeginErrorReadLine();
                 r.game=ProcessOwnership.Capture(child,exe);r.launched_utc=DateTime.UtcNow.ToString("o");Advance(r,"LAUNCHED");
@@ -445,8 +540,9 @@ namespace GtavxrSuite {
                     if(File.Exists(exitFile))File.Delete(exitFile);
                     File.WriteAllText(marker,"",new UTF8Encoding(false));r.exit_marker=true;Save(r);
                 }catch(Exception){marker=null;exitFile=null;}
-                WaitForGame(r,child,exitFile);
+                WaitForGame(r,child,exitFile,startup);
                 r.exit_code=child.ExitCode;
+                if(v.embedded_release&&EmbeddedRelease.HasSessionFixes(v.id)) RecordDisplaySettings(r,"after");
                 CloseResidual(r,exe);
                 if(collector!=null)collector.AfterExit(child);
             }finally{
@@ -459,13 +555,38 @@ namespace GtavxrSuite {
             if(GameRunning())throw new IOException("GAME_STILL_RUNNING");
         }
 
+        private void RecordDisplaySettings(SessionRecord r,string phase){
+            try{
+                var values=Display.DiagnosticSettings(SafeFs.Under(SessionUserDir(r),"settings.xml"));
+                Json.New(SafeFs.Under(SessionDir(r.id),"graphics-"+phase+".json"),new { settings=values, exit_code=r.exit_code });
+            }catch(IOException){}catch(UnauthorizedAccessException){}catch(System.Xml.XmlException){}
+        }
+
+        private void RecordContentInputs(SessionRecord r,List<ModManifest> selected,List<ModManifest> deployed){
+            try{
+                var retail=new[]{"common.rpf","update/update.rpf","update/update2.rpf"}
+                    .Select(path=>{
+                        var file=new FileInfo(SafeFs.Under(env.GameDir,path));
+                        return new { path, bytes=file.Exists?file.Length:(long?)null,
+                            last_write_utc=file.Exists?file.LastWriteTimeUtc.ToString("o"):null };
+                    }).ToArray();
+                var active=selected.Select(m=>new { m.id, m.name, m.version, m.kind,
+                    archive_sha256=m.archive==null?null:m.archive.sha256 }).ToArray();
+                var payloads=deployed.Select(m=>new { m.id, m.built_key,
+                    files=(m.files??new List<FileRef>()).Select(f=>new { f.path,f.bytes,f.sha256 }).ToArray()
+                }).ToArray();
+                Json.New(SafeFs.Under(SessionDir(r.id),"content-inputs.json"),new { retail, active, payloads });
+            }catch(IOException){}catch(UnauthorizedAccessException){}
+        }
+
         // The game is done when its process ends. A game that already wrote out-<pid> (saves done, ExitProcess next) but stays alive
         // for ExitGraceMs is stuck in its own exit (worn sessions 2026-10-20 needed Task Manager every time): its thread stacks are
         // kept and that exact process is ended. Without out-<pid> nothing is ended here (saves may still be running): the
         // "Forzar cierre" button stays the way out.
-        private void WaitForGame(SessionRecord r,Process child,string exitFile){
+        private void WaitForGame(SessionRecord r,Process child,string exitFile,StartupTimeline startup){
             DateTime? seen=null;bool ended=false;
             while(!child.WaitForExit(500)){
+                if(startup!=null)startup.Observe(child);
                 if(ended||exitFile==null||!File.Exists(exitFile))continue;
                 if(seen==null){seen=DateTime.UtcNow;r.exit_file_seen=true;continue;}
                 if((DateTime.UtcNow-seen.Value).TotalMilliseconds<env.ExitGraceMs)continue;
@@ -518,13 +639,34 @@ namespace GtavxrSuite {
             // Snapshot what the game left, keep the previous profile copy as history, then store the new one.
             if(r.script_host)CaptureScripts(r,p);
             if(r.asi_staged)CaptureAsi(r,p);
+            string source=SessionUserDir(r);
+            var now=UserTree.Snapshot(source,r.story_user_only);
+            if(p==null){
+                string recovered=SafeFs.Under(SessionDir(r.id),"recovered-profile");
+                string destination=SafeFs.Under(recovered,"user");
+                UserTree.Mirror(source,now,destination);
+                UserTree.Verify(destination,now);
+                string settings=r.settings_mode=="suite"?r.vr_settings:env.LegacySettingsPath;
+                if(!String.IsNullOrEmpty(settings)&&File.Exists(settings)){
+                    var info=new FileInfo(settings);
+                    SafeFs.ReplaceFrom(settings,SafeFs.Under(recovered,"vr-settings.ini"),SafeFs.Hash(settings),info.Length,0);
+                }
+                r.result="recovered-profile";
+                return;
+            }
             string user=lib.UserDir(p.id);
-            var now=UserTree.Snapshot(env.UserDataDir);
             // The profile as it was before this session (saves + VR settings): "Deshacer la partida de esta prueba".
             // Written once and atomically, so a Capture repeated by Recover never copies half-updated files.
-            if(lib.ReadCopy(p.id,"history/"+r.id)==null)lib.KeepCopy(p,"history/"+r.id,r.id);
-            UserTree.Mirror(env.UserDataDir,now,user);UserTree.Verify(user,now);
-            p=lib.Profile(p.id);p.user=now;
+            if(lib.ReadCopy(p.id,"history/"+r.id)==null)lib.KeepCopy(p,"history/"+r.id,r.id,r.story_user_only);
+            p=lib.Profile(p.id);
+            if(r.story_start!=null){
+                string history=SafeFs.Under(lib.CopyDir(p.id,"history/"+r.id),"user");
+                now=StoryStart.Capture(source,user,history,p,r,now);
+            }else{
+                UserTree.Mirror(source,now,user,r.story_user_only);UserTree.Verify(user,now);
+                if(r.story_user_only)now.AddRange(p.user.Where(f=>!UserTree.IsStoryData(f.relative)));
+            }
+            p.user=now;
             string vrNow=r.settings_mode=="suite"?r.vr_settings:env.LegacySettingsPath;
             if(vrNow!=null&&File.Exists(vrNow)){
                 string vrTarget=lib.VrSettingsFile(p.id);
@@ -546,7 +688,7 @@ namespace GtavxrSuite {
             var asi=r.asi_staged?ClaimAsi(r,game).OrderBy(path=>path,StringComparer.OrdinalIgnoreCase)
                 .Select(path=>new { path, sha256=HashIfPresent(SafeFs.Under(game,path)) }).ToArray():null;
             var state=new {
-                user=UserTree.Snapshot(env.UserDataDir),
+                user=UserTree.Snapshot(SessionUserDir(r),r.story_user_only),
                 vr=HashIfPresent(vr),
                 scripts=r.scripts_staged?UserTree.Snapshot(SafeFs.Under(game,"scripts")):null,
                 asi
@@ -584,9 +726,13 @@ namespace GtavxrSuite {
             Save(r);
         }
 
+        string SessionUserDir(SessionRecord r) {
+            return r.retail_user_dir??env.UserDataDir;
+        }
+
         private void RestoreRetail(SessionRecord r){
             string backup=SafeFs.Under(SessionDir(r.id),"retail-user");
-            if(r.retail_user!=null){UserTree.Verify(backup,r.retail_user);UserTree.Mirror(backup,r.retail_user,env.UserDataDir);}
+            if(r.retail_user!=null){UserTree.Verify(backup,r.retail_user);UserTree.Mirror(backup,r.retail_user,SessionUserDir(r),r.story_user_only);}
             if(r.settings_mode=="suite")return;   // the session's own copy: nothing outside the Suite to put back
             string vrBackup=SafeFs.Under(SessionDir(r.id),"vr-settings-before.ini");
             if(r.vr_settings_was_present){if(File.Exists(vrBackup))File.Copy(vrBackup,env.LegacySettingsPath,true);}
@@ -741,7 +887,8 @@ namespace GtavxrSuite {
             var claimed=ClaimAsi(r,game);
             var orig=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
             foreach(var f in r.asi_original??new List<FileRef>())orig[f.path]=f.sha256;
-            string dest=r.isolated_mod_state?SafeFs.Under(SessionDir(r.id),"optional-capture/asi"):lib.AsiDir(p.id),tmp=dest+".new";
+            string dest=p==null?SafeFs.Under(SessionDir(r.id),"recovered-profile/asi"):
+                r.isolated_mod_state?SafeFs.Under(SessionDir(r.id),"optional-capture/asi"):lib.AsiDir(p.id),tmp=dest+".new";
             if(Directory.Exists(tmp))Directory.Delete(tmp,true);
             Directory.CreateDirectory(tmp);
             foreach(string rel in claimed){
@@ -798,7 +945,8 @@ namespace GtavxrSuite {
             string live=SafeFs.Under(SafeFs.Root(env.GameDir),"scripts");if(!Directory.Exists(live))return;
             var ours=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
             foreach(var f in r.scripts_placed??new List<FileRef>())ours[f.path]=f.sha256;
-            string dest=r.isolated_mod_state?SafeFs.Under(SessionDir(r.id),"optional-capture/scripts"):lib.ScriptsDir(p.id),tmp=dest+".new";
+            string dest=p==null?SafeFs.Under(SessionDir(r.id),"recovered-profile/scripts"):
+                r.isolated_mod_state?SafeFs.Under(SessionDir(r.id),"optional-capture/scripts"):lib.ScriptsDir(p.id),tmp=dest+".new";
             if(Directory.Exists(tmp))Directory.Delete(tmp,true);
             Directory.CreateDirectory(tmp);
             foreach(string f in Directory.GetFiles(live,"*",SearchOption.AllDirectories)){
@@ -829,25 +977,61 @@ namespace GtavxrSuite {
         // Finish whatever an interrupted Suite left behind. Never closes the game: if it is running, wait.
         public string Recover(){
             if(GameRunning())return "GAME_RUNNING";
-            layer.Recover(null);
-            foreach(var r in Unfinished()){
-                if(Rank(r.phase)<Rank("USER_SAVED")){if(r.swapped)SwapOut(r);PutBack(r);if(r.test)Revert(r);r.result="cancelled";}
-                else if(Rank(r.phase)<Rank("LAUNCHED")&&
-                        (!r.launch_attempted || r.launch_staging_sha256==StagedDataIdentity(r))){
-                    RestoreRetail(r);if(r.swapped)SwapOut(r);PutBack(r);if(r.test)Revert(r);r.result="cancelled";
-                }
-                else{
-                    if(r.game!=null&&ProcessOwnership.IsSameProcessAlive(r.game))return "GAME_RUNNING";
-                    if(Rank(r.phase)<Rank("CAPTURED")){Capture(r,lib.Profile(r.profile));Advance(r,"CAPTURED");}
-                    if(Rank(r.phase)<Rank("RESTORED")){RestoreRetail(r);if(r.swapped)SwapOut(r);PutBack(r);Advance(r,"RESTORED");}
-                    if(r.test&&Rank(r.phase)<Rank("REVERTED")){Revert(r);Advance(r,"REVERTED");}
-                    r.result=r.result??"played";
-                }
-                if(r.lease&&env.DevHost)PlayLease.ReleaseOwn(env.DevRepo,r.id);
-                r.ended_utc=r.ended_utc??DateTime.UtcNow.ToString("o");
-                Advance(r,"CLOSED");
+            if(Unfinished().Count==0&&!layer.Pending)return "OK";
+            string game=SafeFs.Root(env.GameDir);
+            if(!Directory.Exists(game)){
+                string original=layer.PendingGame??Unfinished().Select(record=>record.game_dir).FirstOrDefault(path=>path!=null)??game;
+                throw new IOException("RECOVERY_GAME_LOCATION_CHANGED: "+original);
             }
-            return "OK";
+            using(var library=GameScope.Acquire(env.DataRoot))
+            using(var scope=GameScope.Acquire(game)){
+                if(GameRunning())return "GAME_RUNNING";
+                string pendingGame=layer.PendingGame;
+                if(pendingGame!=null&&!String.Equals(pendingGame,game,StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("RECOVERY_GAME_LOCATION_CHANGED: "+pendingGame);
+                var unfinished=Unfinished();
+                foreach(var record in unfinished)
+                    if(record.game_dir_identity!=null&&record.game_dir_identity!=scope.Name)
+                        throw new IOException("RECOVERY_GAME_LOCATION_CHANGED: "+record.game_dir);
+                return RecoverOwned(unfinished);
+            }
+        }
+
+        string RecoverOwned(List<SessionRecord> unfinished){
+            layer.Recover(null);
+            var recovered=new List<string>();
+            foreach(var r in unfinished){
+                using(var user=OpenRecoveryUser(r)){
+                    if(Rank(r.phase)<Rank("USER_SAVED")){if(r.swapped)SwapOut(r);PutBack(r);if(r.test)Revert(r);r.result="cancelled";}
+                    else if(Rank(r.phase)<Rank("LAUNCHED")&&
+                            (!r.launch_attempted || r.launch_staging_sha256==StagedDataIdentity(r))){
+                        RestoreRetail(r);if(r.swapped)SwapOut(r);PutBack(r);if(r.test)Revert(r);r.result="cancelled";
+                    }
+                    else{
+                        if(r.game!=null&&ProcessOwnership.IsSameProcessAlive(r.game))return "GAME_RUNNING";
+                        if(Rank(r.phase)<Rank("CAPTURED")){Capture(r,lib.Profile(r.profile));Advance(r,"CAPTURED");}
+                        if(Rank(r.phase)<Rank("RESTORED")){RestoreRetail(r);if(r.swapped)SwapOut(r);PutBack(r);Advance(r,"RESTORED");}
+                        if(r.test&&Rank(r.phase)<Rank("REVERTED")){Revert(r);Advance(r,"REVERTED");}
+                        r.result=r.result??"played";
+                    }
+                    if(r.lease&&env.DevHost)PlayLease.ReleaseOwn(env.DevRepo,r.id);
+                    r.ended_utc=r.ended_utc??DateTime.UtcNow.ToString("o");
+                    CloseRecord(r);
+                    if(r.result=="recovered-profile")recovered.Add(SafeFs.Under(SessionDir(r.id),"recovered-profile"));
+                }
+            }
+            return recovered.Count==0?"OK":"RECOVERED_PROFILE:"+String.Join("\n",recovered);
+        }
+
+        GameScope OpenRecoveryUser(SessionRecord r) {
+            if(r.retail_user_identity==null||Rank(r.phase)<Rank("USER_SAVED")||Rank(r.phase)>=Rank("RESTORED"))
+                return null; // Legacy sessions retain their original recovery behavior.
+            string original=SafeFs.Root(r.retail_user_dir);
+            if(!Directory.Exists(original))throw new IOException("RECOVERY_SAVE_LOCATION_CHANGED: "+original);
+            var scope=GameScope.Acquire(original);
+            if(scope.Name==r.retail_user_identity)return scope;
+            scope.Dispose();
+            throw new IOException("RECOVERY_SAVE_LOCATION_CHANGED: "+original);
         }
     }
 }

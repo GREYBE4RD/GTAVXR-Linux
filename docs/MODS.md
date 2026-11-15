@@ -5,10 +5,14 @@ Import mods from the **Mods** screen, then enable them in the profile you plan t
 ## Import and enable mods
 
 1. Download the **GTA V Legacy** edition of each mod. Keep the original archive and folder structure.
-2. In the Suite, open **Mods → Add mod** and select the mod file. You can also drop the file or an extracted mod folder onto the **Mods** screen. Review the mod entry, requirements, and compatibility messages.
+2. Select **Mods** in the Suite’s top navigation, next to **Play** and **Settings**. In **Mod Library**, select **Add mod** and choose the mod file. You can also drop the file or an extracted mod folder onto the **Mods** screen. Review the mod entry, requirements, and compatibility messages.
 3. From **Play**, open your profile and select its **Mods** tab. Enable the mod and use **Customize** when the Suite offers options for the pack.
 4. Resolve any conflicts listed for the profile. Import required add-ons too, then select **Play** to apply your choices.
 5. To return to the base experience, disable the mods in that profile and launch again. Imported mods remain in your library for other profiles.
+
+### Existing OpenIV mods and split downloads
+
+The Suite applies mods selected in the active profile. To use content you previously installed through OpenIV, import its original supported package into the Suite and enable it in that profile. You can import compatible `.oiv` packages directly. **For one archive split into multiple volumes**, put every volume in the same folder and extract the first one with an archive tool that supports the format. The tool reads the other volumes automatically. Add the extracted `.oiv` or supported mod folder through **Mods → Add mod**, then enable it in your profile. **For separate `.oiv` installers**, add each required installer as its own package. Follow the mod author's instructions for required components and install order. Enable the required entries in the profile you intend to play.
 
 ## Mod versions and compatibility
 
@@ -23,7 +27,13 @@ The in-game results below come from GTAVXR prerelease builds on Steam Legacy wit
 | **V4EVER** | **1.2 Legacy** | Add the Legacy archive or select the `dlc.rpf` inside its `v4evermod` folder. Keep that folder name. Enable **V4EVER** in the profile. | **Played in the combined VR profile.** The standalone profile was prepared offline. |
 | **No Umbrellas** | **Bundled with WoV 10.1.** The OIV reports **0.0**. | Add the full WoV archive or separately add its bundled `no umbrellas.oiv`. Enable **World of Variety** in the profile, open **Customize**, and turn **Umbrellas when it rains** off. | **Recognized and prepared offline** as a WoV option. Its effect in the rain remains unverified in-game. |
 
+On a mod card, **Works with** or **Available for** lists the Suite versions eligible to use the package. The Suite shows whether the mod was passed from a test profile to a regular profile. See the table above for the exact versions verified in-game.
+
 The Suite prepares content changes when you select **Play**. Some packs modify the same resources. Read any conflict or incompatibility message and try one mod at a time to isolate the cause.
+
+### Sound mods
+
+A sound pack can import successfully and still have no effect in game. Check that the pack is enabled in the profile you launched. If it still has no effect, share the exact mod name and version or download link, any message shown by the Suite, and which sound you expected to change. Use the compatibility table above for packages with recorded results.
 
 ## In-game world settings
 
@@ -34,6 +44,6 @@ Open **VR Menu → Mods**, select **Pedestrians** or **Traffic and parked cars**
 - GTAVXR Script Host loads compiled scripts that use the ScriptHookVDotNet API supported by the selected version. The Suite inspects imported files and explains why a script cannot load.
 - The Suite checks **.asi** plugins that use Script Hook V for compatibility with the Host. A plugin that relies directly on the retail executable, calls an unsupported Host function, or targets Enhanced may require a different version of the mod.
 - Import the mod through the Suite so its Script Host can manage the files for each session. Source-only **.cs** or **.vb** scripts that require compilation and the older ScriptHookVDotNet 1 API are outside this workflow.
-- **Untested** means the mod has not been confirmed in play. If the Suite flags a script as incompatible, read the reason on its mod entry. Select the appropriate Legacy version of the mod or disable it for that profile.
+- If the Suite flags a script as incompatible, read the reason on its mod entry and select a suitable Legacy version or disable it for that profile.
 
 If a mod imports but fails in-game, record its name, version, and exact error. Launch the same profile with that mod disabled to compare. [Troubleshooting](TROUBLESHOOTING.md#mods-and-graphics)

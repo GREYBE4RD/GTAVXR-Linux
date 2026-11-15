@@ -20,6 +20,7 @@
 #include "native_frustum.h"
 #include "readiness.h"
 #include "xr_api004.h"
+#include "xr_preopened.h"
 #include "bridge.h"
 #include "actions.h"
 #include "hands.h"
@@ -50,6 +51,7 @@
 
 #include "perf147_bridge.h"
 #include "eye_chain_gpu.h" // 167-neural A2/B2
+#include "world_pixel_probe.h"
 
 namespace native_xr {
 using Microsoft::WRL::ComPtr;
@@ -117,6 +119,8 @@ struct Session {
     int64_t selected_format=0;std::string last_error;
     // 167-neural A2/B2: RGBA swapchain fallback (copies become draws) and the per-eye NR/SR chain
     bool swapRgba=false;gx_chain::Blitter swapBlit;gx_chain::Chain eyeChain;std::wstring chainDataDir,chainBridgeDir;
+    std::array<WorldPixelProbe,2> worldProbe;
+    unsigned worldProbePairs=0;
     std::function<void(const std::string&)> log=[](const std::string&){};
     std::function<void(ID3D11Texture2D*,unsigned)> first_image;
     bool compact_logging=false; // user play: sparse receipts, no automatic readback images.
@@ -171,19 +175,33 @@ struct Session {
         }
     }
 
-    void initialize(ID3D11Device*d,uint32_t w,uint32_t h,const wchar_t*loader) {
+    bool steamVrInput=false;
+
+    void initialize(ID3D11Device*d,uint32_t w,uint32_t h,const wchar_t*loader,PreopenedXr* ready=nullptr) {
         demand(d&&w&&h&&w<=4096&&h<=4096&&!instance,"XR_INITIALIZE_INPUT");
         device=d;d->GetImmediateContext(&context);width=w;height=h;
         demand(!(d->GetCreationFlags()&D3D11_CREATE_DEVICE_SINGLETHREADED),"XR_SINGLETHREADED_DEVICE_UNSUPPORTED");
         health("initialize_before");
-        demand(loader&&*loader&&api.Load(loader),"XR_LOADER");
-        const char* extension=XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
-        XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
-        strcpy_s(ci.applicationInfo.applicationName,"GTAVXR Native");strcpy_s(ci.applicationInfo.engineName,"GTAVXR");
-        ci.applicationInfo.apiVersion=XR_CURRENT_API_VERSION;ci.enabledExtensionCount=1;ci.enabledExtensionNames=&extension;
-        check(api.CreateInstance(&ci,&instance),"CreateInstance");demand(api.LoadForInstance(instance),"XR_ENTRYPOINTS");
-        XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};si.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-        check(api.GetSystem(instance,&si,&system),"GetSystem");
+        if(ready&&ready->take(loader,api,instance,system)){
+            log("XR_INSTANCE api=1.0 result=0 reused=1");
+        }else{
+            const auto started=GetTickCount64();
+            demand(loader&&*loader&&api.Load(loader),"XR_LOADER");
+            const char* extension=XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
+            XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
+            strcpy_s(ci.applicationInfo.applicationName,"GTAVXR Native");
+            strcpy_s(ci.applicationInfo.engineName,"GTAVXR");
+            ci.applicationInfo.apiVersion=steamvr_bootstrap_requested()?XR_API_VERSION_1_0:XR_CURRENT_API_VERSION;
+            ci.enabledExtensionCount=1;ci.enabledExtensionNames=&extension;
+            const XrResult created=api.CreateCompatibleInstance(ci,instance);
+            log("XR_INSTANCE api="+std::to_string(XR_VERSION_MAJOR(ci.applicationInfo.apiVersion))+
+                "."+std::to_string(XR_VERSION_MINOR(ci.applicationInfo.apiVersion))+
+                " result="+std::to_string(static_cast<int>(created))+
+                " reused=0 elapsed_ms="+std::to_string(GetTickCount64()-started));
+            check(created,"CreateInstance");demand(api.LoadForInstance(instance),"XR_ENTRYPOINTS");
+            XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};si.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+            check(api.GetSystem(instance,&si,&system),"GetSystem");
+        }
         XrSystemProperties uiProperties{XR_TYPE_SYSTEM_PROPERTIES};
         check(api.GetSystemProperties(instance,system,&uiProperties),"UiSystemProperties");
         uiMaxLayers=(std::min)(uiProperties.graphicsProperties.maxLayerCount,16u);
@@ -204,6 +222,10 @@ struct Session {
         XrGraphicsBindingD3D11KHR graphics{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};graphics.device=d;
         XrSessionCreateInfo sc{XR_TYPE_SESSION_CREATE_INFO};sc.systemId=system;sc.next=&graphics;check(api.CreateSession(instance,&sc,&session),"CreateSession");
         actions.initialize(api.GetInstanceProcAddr,instance,session);
+        for(unsigned i=0;i<gx_profiles::kProfileCount;++i){
+            if(actions.unsupportedProfiles&(1u<<i))
+                log(std::string("XR_BINDING_UNSUPPORTED profile=")+gx_profiles::kProfiles[i].path);
+        }
         XrReferenceSpaceCreateInfo rc{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};rc.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;rc.poseInReferenceSpace.orientation.w=1;
         check(api.CreateReferenceSpace(session,&rc,&space),"CreateLocalSpace");
         rc.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -236,6 +258,7 @@ struct Session {
             std::to_string(configs[0].maxImageRectWidth)+"x"+std::to_string(configs[0].maxImageRectHeight)+" chosen="+std::to_string(w)+"x"+std::to_string(h));
         LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);timingFrequency=frequency.QuadPart;
         XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};check(api.GetInstanceProperties(instance,&properties),"InstanceProperties");
+        steamVrInput=steamvr_runtime(properties.runtimeName);
         log("INITIALIZED width="+std::to_string(w)+" height="+std::to_string(h)+" format="+std::to_string(selected_format)+(swapRgba?" swap=rgba":"")+" qpc_frequency="+std::to_string(frequency.QuadPart)+" runtime="+properties.runtimeName+" runtime_version="+std::to_string(properties.runtimeVersion));
         health("initialize_after");
     }
@@ -274,6 +297,11 @@ struct Session {
         const long long perfStart147=Perf147::now();perf147.steps.reset(perfStart147);
         demand(!fault&&!begun&&gen,"XR_BEGIN_STATE");health("begin_before");perf147.cpu("poll_events",[&](){poll();});demand(!terminal,"XR_TERMINAL");
         GxFrame out{};out.size=sizeof(out);out.generation=gen;copied=0;visible=false;reset_frame_presentation();
+        if(steamVrInput)for(unsigned eye=0;eye<worldProbe.size();++eye){
+            std::string detail;
+            if(worldProbe[eye].Read(context.Get(),detail))
+                log("WORLD_PIXELS eye="+std::to_string(eye)+detail);
+        }
         if(!running)return out;
         XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};check(perf147.cpu("xrWaitFrame",[&](){return api.WaitFrame(session,&wi,&timing);}),"WaitFrame");
         {   // build133 FRAME_TIMING: delivered cadence between successive WaitFrame returns, every 600 frames.
@@ -333,6 +361,7 @@ struct Session {
         if(!begun)poll();
         demand(!terminal,"XR_TERMINAL");
         auto out=actions.read(running&&!terminal,state==XR_SESSION_STATE_FOCUSED);
+        if(steamVrInput)out.reserved|=GX_INPUT_STEAMVR;
         const uint64_t hapticNow=GetTickCount64();
         const bool freshRumble=rumbleTick&&hapticNow-rumbleTick<=200;
         spatialOwnerGate.input(hapticNow,freshRumble?nativeRumble.heavy:0,freshRumble?nativeRumble.light:0);

@@ -8,6 +8,11 @@ std::array<UiPixels,64> uiPixels;
 Eye rightUiEye;struct UiPanel {Eye eye;unsigned width=0,height=0;};std::array<UiPanel,8> uiPanels;
 Eye elementUiEye;gx_ui_element::Plan rightPlan;uint64_t rightPlanFrame=0,elementUiFrame=0;
 UiPanel wantedUiPanel; // exclusive native wanted row; not a second general HUD
+UiPanel subtitleUiPanel;
+Eye subtitlePreviewEye;
+ComPtr<ID3D11Texture2D> subtitlePreviewPixels;
+bool subtitleLayerLogged=false;
+unsigned hudProductReceipts=0;
 uint64_t rightUiFrame=0,panelUiFrame=0,uiCaptures=0;
 unsigned rightUiWidth=0,rightUiHeight=0;
 uint32_t uiMaxLayers=16,uiMaxWidth=4096,uiMaxHeight=4096; // actual runtime properties at initialize
@@ -95,18 +100,53 @@ bool capture_native_ui(const GxUiCapture&r,ID3D11Texture2D*source){
         perf147.gpu(context.Get(),"ui_capture",-1,int(i),[&](){context->CopySubresourceRegion(slot.texture.Get(),0,0,0,0,source,0,&box);});
     }
     health("ui_batch_copy");uiPixels=std::move(staged);uiCaptures=nextSerial;rightPlanFrame=0;
+    const unsigned tracked[]={1,10,11,12,15,GX_UI_FEED};
+    for(unsigned k=0;k<sizeof(tracked)/sizeof(tracked[0]);++k){
+        if(hudProductReceipts&(1u<<k))continue;
+        for(unsigned i=0;i<r.count;++i)if(r.items[i].id==tracked[k]){
+            const auto& item=r.items[i];
+            hudProductReceipts|=1u<<k;
+            log("HUD_PRODUCT frame="+std::to_string(frame)+" id="+std::to_string(item.id)+
+                " route="+std::to_string(item.route)+" size="+std::to_string(item.width)+"x"+std::to_string(item.height));
+            break;
+        }
+    }
     // Source pointers are not retained. No readback, frame latency or state setter.
     return true;
 }
-bool wanted_ui_layer(XrCompositionLayerQuad&q,const XrCompositionLayerQuad&map){
-    if(!gx_ui_visibility::enabled(uiVisibility,gx_ui_element::Wanted))return false;
-    if(overlayState.visible||panel||wristFrame!=frame||(!panel_free(gx_panel::MAP)&&(wristHandFrame!=frame||!wristHandValid))||
-       !wristEye.swap||wristEye.acquired||map.subImage.swapchain!=wristEye.swap)return false;
+bool wanted_ui_layer(XrCompositionLayerQuad&q,const XrCompositionLayerQuad* map){
+    if(overlayState.visible||panel||!gx_ui_visibility::enabled(uiVisibility,gx_ui_element::Wanted))return false;
+    const bool leftTracked=wristHandFrame==frame&&wristHandValid;
+    if(!map&&!leftTracked&&!head_space)return false;
     UiPixels*p=nullptr;
     for(auto&v:uiPixels)if(v.texture&&v.captured==frame&&gx_native_ui::wantedItem(v.item)){p=&v;break;}
-    if(!p)return false;const auto&r=p->item;gx_wanted_ui::Row row;
-    if(!gx_wanted_ui::row(wristWidth,wristHeight,r.width,r.height,map.size.width,map.size.height,
-                         gx_wrist::scale(wristProfiles.hand[0]),row))return false;
+    if(!p)return false;
+    const auto&r=p->item;
+    const float leftScale=gx_wrist::scale(wristProfiles.hand[0]);
+    const auto&profile=uiElementProfiles.element[gx_ui_element::Wanted];
+    const float ownScale=profile.individual?profile.percent*.01f:1.f;
+    const bool headFallback=!map&&!leftTracked;
+    GxPose anchor={-.34,.30,-1.45,0,0,0,1};
+    float width=.32f;
+    q.space=headFallback?head_space:space;
+    if(map){
+        gx_wanted_ui::Row row;
+        if(!gx_wanted_ui::row(wristWidth,wristHeight,r.width,r.height,map->size.width,map->size.height,leftScale,row))
+            return false;
+        anchor={map->pose.position.x,map->pose.position.y,map->pose.position.z,
+                map->pose.orientation.x,map->pose.orientation.y,map->pose.orientation.z,map->pose.orientation.w};
+        anchor=gx_wanted_ui::below(anchor,(map->size.height+row.height*ownScale)*.5+.008*leftScale);
+        width=float(row.width);
+        q.space=map->space;
+    }else if(leftTracked){
+        anchor=gx_wrist::pose(wristGrip,wristProfiles.hand[0],0);
+        width=.14f*leftScale;
+    }
+    if(profile.individual)anchor=gx_ui_element::pose(anchor,profile,headFallback?1.f:leftScale);
+    q.pose.orientation={float(anchor.qx),float(anchor.qy),float(anchor.qz),float(anchor.qw)};
+    q.pose.position={float(anchor.x),float(anchor.y),float(anchor.z)};
+    q.size={width*ownScale,width*ownScale*float(r.height)/float(r.width)};
+    if(!headFallback&&!place_panel(q,gx_panel::WANTED))return false;
     if(r.width>uiMaxWidth||r.height>uiMaxHeight){
         if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_wanted_size");return false;}
     if(wantedUiPanel.width!=r.width||wantedUiPanel.height!=r.height){
@@ -114,33 +154,72 @@ bool wanted_ui_layer(XrCompositionLayerQuad&q,const XrCompositionLayerQuad&map){
     if(!wantedUiPanel.eye.swap)create_ui_eye(wantedUiPanel.eye,r.width,r.height);
     auto*t=acquire_ui_eye(wantedUiPanel.eye,r.width,r.height);demand(t!=p->texture.Get(),"UI_WANTED_ALIAS");
     perf147.gpu(context.Get(),"wanted_copy",-1,0,[&](){swap_copy(t,p->texture.Get());});release_ui_eye(wantedUiPanel.eye);
-    q.space=map.space;q.eyeVisibility=map.eyeVisibility;q.layerFlags=map.layerFlags;
-    q.subImage.swapchain=wantedUiPanel.eye.swap;q.subImage.imageRect.extent={int(r.width),int(r.height)};
-    GxPose accepted={map.pose.position.x,map.pose.position.y,map.pose.position.z,
-                     map.pose.orientation.x,map.pose.orientation.y,map.pose.orientation.z,map.pose.orientation.w};
-    const auto&profile=uiElementProfiles.element[gx_ui_element::Wanted];
-    const float ownScale=profile.individual?profile.percent*.01f:1.f;
-    const double down=(map.size.height+row.height*ownScale)*.5+.008*gx_wrist::scale(wristProfiles.hand[0]);
-    GxPose below=gx_wanted_ui::below(accepted,down);
-    if(profile.individual)below=gx_ui_element::pose(below,profile,gx_wrist::scale(wristProfiles.hand[0]));
-    q.pose=map.pose;q.pose.position={float(below.x),float(below.y),float(below.z)};
-    q.pose.orientation={float(below.qx),float(below.qy),float(below.qz),float(below.qw)};
-    q.size={float(row.width*ownScale),float(row.height*ownScale)};return place_panel(q,gx_panel::WANTED);
+    q.eyeVisibility=XR_EYE_VISIBILITY_BOTH;
+    q.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT|XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+    q.subImage.swapchain=wantedUiPanel.eye.swap;
+    q.subImage.imageRect.extent={int(r.width),int(r.height)};
+    return true;
 }
-bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsigned availableRightLayers=1){
+void place_subtitle(XrCompositionLayerQuad& q){
+    const auto& profile=uiElementProfiles.element[gx_ui_element::Subtitles];
+    const GxPose front=gx_panel::subtitlePose(profile);
+    q.space=head_space;
+    q.pose.position={float(front.x),float(front.y),float(front.z)};
+    q.pose.orientation={float(front.qx),float(front.qy),float(front.qz),float(front.qw)};
+    const float individual=profile.individual?profile.percent*.01f:1.f;
+    q.size.width*=individual;q.size.height*=individual;
+    const auto& placement=panelPlacements.panel[gx_panel::EL_SUBTITLES];
+    if(placement.anchor==gx_panel::DEFAULT||!place_panel(q,gx_panel::EL_SUBTITLES)){
+        q.size.width*=placement.scale;q.size.height*=placement.scale;
+    }
+}
+bool subtitle_preview(XrCompositionLayerQuad& q){
+    constexpr unsigned w=256,h=40;
+    if(!panelPlacements.previewSubtitle||w>uiMaxWidth||h>uiMaxHeight)return false;
+    if(!subtitlePreviewPixels){
+        std::array<uint32_t,w*h> pixels{};
+        for(unsigned y=2;y<h-2;++y)for(unsigned x=2;x<w-2;++x){
+            const bool border=x<4||x>=w-4||y<4||y>=h-4;
+            const bool line=(y>=12&&y<16&&x>30&&x<w-30)||(y>=24&&y<28&&x>61&&x<w-61);
+            pixels[y*w+x]=line?0xffeeeeeeu:border?0xff6acf82u:0xb6202020u;
+        }
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width=w;d.Height=h;d.ArraySize=d.MipLevels=d.SampleDesc.Count=1;
+        d.Format=DXGI_FORMAT_B8G8R8A8_UNORM;d.Usage=D3D11_USAGE_IMMUTABLE;
+        d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data{};data.pSysMem=pixels.data();data.SysMemPitch=w*4;
+        demand(SUCCEEDED(device->CreateTexture2D(&d,&data,&subtitlePreviewPixels)),"UI_SUBTITLE_PREVIEW");
+    }
+    if(!subtitlePreviewEye.swap)create_ui_eye(subtitlePreviewEye,w,h);
+    auto* texture=acquire_ui_eye(subtitlePreviewEye,w,h);
+    swap_copy(texture,subtitlePreviewPixels.Get());
+    release_ui_eye(subtitlePreviewEye);
+    q.subImage.swapchain=subtitlePreviewEye.swap;
+    q.subImage.imageRect.extent={int(w),int(h)};
+    q.size={.76f,.76f*h/w};
+    place_subtitle(q);
+    return true;
+}
+bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsigned availableRightLayers=1,
+                     bool subtitlesOnly=false){
     if(overlayState.visible||panel||!head_space)return false;
     std::vector<UiPixels*> current;
     for(auto&p:uiPixels)if(p.texture&&p.captured==frame&&gx_ui_visibility::product(uiVisibility,p.item)&&!gx_native_ui::handRoute(p.item.route)&&
                          !gx_native_ui::wantedItem(p.item)&&!gx_menyoo_route::belongs(p.item)&&
-                         !gx_native_ui::buttonsItem(p.item))current.push_back(&p); // build167 item 3: its own layer
+                         !gx_native_ui::buttonsItem(p.item)&&(p.item.id==15)==subtitlesOnly)current.push_back(&p);
     std::sort(current.begin(),current.end(),[](const UiPixels*a,const UiPixels*b){
         if(a->item.priority!=b->item.priority)return a->item.priority>b->item.priority;return a->item.id<b->item.id;});
+    const bool rightFallback=!panel_free(gx_panel::RIGHT)&&(hudHandFrame!=frame||!(hudHandMask&2));
     gx_native_ui::Layout layout;std::vector<std::pair<UiPixels*,gx_native_ui::Placement>> cards;std::vector<UiPixels*> large;
+    std::vector<UiPixels*> overflow;
     for(auto*p:current){
         if(gx_native_ui::fitRoute(p->item)==GX_UI_PANEL){large.push_back(p);continue;}
-        auto dst=layout.append(p->item);
-        if(dst.placed)cards.push_back({p,dst});
-        else if(frame<=5||frame%120==0)log("UI_GAP reason=wrist_capacity_no_modal id="+std::to_string(p->item.id));
+        if(uiMaxWidth>=GX_UI_ATLAS&&uiMaxHeight>=GX_UI_ATLAS){
+            auto dst=layout.append(p->item);
+            if(dst.placed){cards.push_back({p,dst});continue;}
+        }
+        if(p->item.width<=uiMaxWidth&&p->item.height<=uiMaxHeight)overflow.push_back(p);
+        else if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_hud_size id="+std::to_string(p->item.id));
     }
     q.eyeVisibility=XR_EYE_VISIBILITY_BOTH;
     q.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT|XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
@@ -149,9 +228,12 @@ bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsign
         // put a background over its foreground. Multiple simultaneous producers
         // get distinct layers; they are not silently replaced by the first one.
         std::sort(large.begin(),large.end(),[](const UiPixels*a,const UiPixels*b){return a->serial<b->serial;});
-        if(which>=large.size()||which>=uiPanels.size())return false;
-        if(which==0&&large.size()>uiPanels.size()&&(frame<=5||frame%120==0))log("UI_GAP reason=modal_capacity count="+std::to_string(large.size()));
-        UiPixels*p=large[which];const auto&r=p->item;auto&modalEye=uiPanels[which];
+        const size_t nativeCount=large.size();
+        large.insert(large.end(),overflow.begin(),overflow.end());
+        const size_t modalLimit=uiPanels.size();
+        if(which>=large.size()||which>=modalLimit)return subtitlesOnly&&subtitle_preview(q);
+        if(which==0&&large.size()>modalLimit&&(frame<=5||frame%120==0))log("UI_GAP reason=modal_capacity count="+std::to_string(large.size()));
+        UiPixels*p=large[which];const auto&r=p->item;auto&modalEye=subtitlesOnly?subtitleUiPanel:uiPanels[which];
         if(r.width>uiMaxWidth||r.height>uiMaxHeight){if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_panel_size id="+std::to_string(r.id));return false;}
         if(modalEye.width!=r.width||modalEye.height!=r.height){close_ui_eye(modalEye.eye);modalEye.width=r.width;modalEye.height=r.height;}
         if(!modalEye.eye.swap)create_ui_eye(modalEye.eye,r.width,r.height);
@@ -159,6 +241,14 @@ bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsign
         perf147.gpu(context.Get(),"modal_copy",-1,int(which),[&](){swap_copy(t,p->texture.Get());});release_ui_eye(modalEye.eye);panelUiFrame=frame;
         q.space=head_space;q.subImage.swapchain=modalEye.eye.swap;q.subImage.imageRect.extent={int(r.width),int(r.height)};
         q.pose.orientation.w=1;
+        if(which>=nativeCount){
+            const size_t index=which-nativeCount;
+            const float aspect=float(r.height)/float(r.width);
+            const float width=(std::min)(.37f,.14f/aspect);
+            q.size={width,width*aspect};
+            q.pose.position={.53f-.42f*float(index/4),.48f-.17f*float(index%4),-1.45f};
+            return true;
+        }
         if(r.route==GX_UI_MENU_PANEL){
             // Recompose only the native menu crops about THEIR shared centre,
             // keeping relative text/background/footer placement, not16:9 edges.
@@ -174,24 +264,21 @@ bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsign
         q.size={screenWidth*float(r.width)/p->sourceWidth,screenHeight*float(r.height)/p->sourceHeight};
         q.pose.position={screenWidth*((r.x+r.width*.5f)/p->sourceWidth-.5f),
             screenHeight*(.5f-(r.y+r.height*.5f)/p->sourceHeight),-1.45f};
-        if(r.id==15){ // isolated subtitles, readable front panel; never watch-relative
-            q.pose.position={0.f,-.25f,-1.45f};
-            const auto&profile=uiElementProfiles.element[gx_ui_element::Subtitles];
-            if(profile.individual){GxPose base={0,-.25,-1.45,0,0,0,1};const GxPose adjusted=gx_ui_element::pose(base,profile,1.f);
-                q.pose.position={float(adjusted.x),float(adjusted.y),float(adjusted.z)};
-                q.pose.orientation={float(adjusted.qx),float(adjusted.qy),float(adjusted.qz),float(adjusted.qw)};
-                q.size.width*=profile.percent*.01f;q.size.height*=profile.percent*.01f;}
+        if(subtitlesOnly){ // same anchor and scale as the positioning preview
+            if(!subtitleLayerLogged){
+                subtitleLayerLogged=true;
+                log("SUBTITLE_LAYER frame="+std::to_string(frame)+" generation="+std::to_string(generation)+
+                    " size="+std::to_string(r.width)+"x"+std::to_string(r.height));
+            }
+            place_subtitle(q);
         }return true;
     }
-    if(cards.empty()||(!panel_free(gx_panel::RIGHT)&&(hudHandFrame!=frame||!(hudHandMask&2)))){
-        if(!cards.empty()&&(frame<=5||frame%120==0))log("UI_GAP reason=right_tracking_epoch cards="+std::to_string(cards.size()));
-        return false;
-    }
-    if(uiMaxWidth<GX_UI_ATLAS||uiMaxHeight<GX_UI_ATLAS){if(frame<=5||frame%120==0)log("UI_GAP reason=runtime_atlas_size");return false;}
+    if(cards.empty())return false;
     if(rightPlanFrame!=frame){
         GxUiItem items[gx_ui_element::MaxCards];demand(cards.size()<=gx_ui_element::MaxCards,"UI_ELEMENT_CARD_CAPACITY");
         for(unsigned i=0;i<cards.size();++i)items[i]=cards[i].first->item;
-        rightPlan=gx_ui_element::plan(items,unsigned(cards.size()),uiElementProfiles,availableRightLayers);
+        rightPlan=gx_ui_element::plan(items,unsigned(cards.size()),
+            rightFallback?gx_ui_element::defaults():uiElementProfiles,availableRightLayers);
         demand(rightPlan.count==cards.size(),"UI_ELEMENT_PLAN");
         if(rightPlan.rejectedMask&&(frame<=5||frame%120==0))
             log("UI_GAP reason=element_layer_budget_automatic_fallback mask="+std::to_string(rightPlan.rejectedMask));
@@ -222,7 +309,12 @@ bool native_ui_layer(XrCompositionLayerQuad&q,bool modal,unsigned which=0,unsign
     q.pose.position={float(adjusted.x),float(adjusted.y),float(adjusted.z)};
     const float aspect=float(rightUiHeight)/float(rightUiWidth);
     const float wide=gx_cash_ui::wristWidth(rightUiWidth,rightUiHeight,rightPlan.moneyOnly)*gx_wrist::scale(wristProfiles.hand[1]);
-    q.size={wide,wide*aspect};return place_panel(q,gx_panel::RIGHT);
+    q.size={wide,wide*aspect};
+    if(!rightFallback&&place_panel(q,gx_panel::RIGHT))return true;
+    const float frontWidth=(std::min)(.48f,.59f/aspect);
+    q.space=head_space;q.pose.orientation={0,0,0,1};
+    q.pose.position={.43f,.1f,-1.45f};q.size={frontWidth,frontWidth*aspect};
+    return true;
 }
 bool native_ui_element_layer(XrCompositionLayerQuad&q,unsigned kind){
     if(kind>=gx_ui_element::Count||overlayState.visible||panel||!space||rightPlanFrame!=frame||
@@ -243,6 +335,8 @@ bool native_ui_element_layer(XrCompositionLayerQuad&q,unsigned kind){
     q.size={wide,wide*float(g.height)/g.width};return place_panel(q,gx_panel::elementPanel(kind));
 }
 void close_native_ui(){
+    close_ui_eye(subtitleUiPanel.eye);subtitleUiPanel.width=subtitleUiPanel.height=0;
+    close_ui_eye(subtitlePreviewEye);subtitlePreviewPixels.Reset();
     close_native_menu_layer();
     close_ui_eye(wantedUiPanel.eye);wantedUiPanel.width=wantedUiPanel.height=0;
     close_ui_eye(rightUiEye);close_ui_eye(elementUiEye);for(auto&p:uiPanels){close_ui_eye(p.eye);p.width=p.height=0;}for(auto&p:uiPixels)p=UiPixels();

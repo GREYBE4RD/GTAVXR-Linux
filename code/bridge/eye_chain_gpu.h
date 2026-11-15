@@ -141,30 +141,33 @@ public:
         D3D11_TEXTURE2D_DESC sd{}; s->GetDesc(&sd);
         Need(ready() && sd.ArraySize == 1 && sd.SampleDesc.Count == 1, "copy_source_shape");
         ID3D11Texture2D* readable = s;
-        if(!(sd.BindFlags & D3D11_BIND_SHADER_RESOURCE)) {
+        const DXGI_FORMAT viewFormat=SourceView(sd.Format);
+        const bool srgb=sd.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB||sd.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        if(!(sd.BindFlags & D3D11_BIND_SHADER_RESOURCE)||srgb) {
             Scratch* hit = nullptr;
-            for(auto& x : scratch_) if(x.desc.Width == sd.Width && x.desc.Height == sd.Height && x.desc.Format == sd.Format) hit = &x;
+            for(auto& x : scratch_) if(x.desc.Width == sd.Width && x.desc.Height == sd.Height && x.desc.Format == viewFormat) hit = &x;
             if(!hit) {
                 if(scratch_.size() >= 8) scratch_.erase(scratch_.begin());
-                Scratch n; n.desc = sd; n.desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; n.desc.MiscFlags = 0; n.desc.CPUAccessFlags = 0; n.desc.Usage = D3D11_USAGE_DEFAULT;
+                Scratch n; n.desc = sd; n.desc.Format=viewFormat; n.desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; n.desc.MiscFlags = 0; n.desc.CPUAccessFlags = 0; n.desc.Usage = D3D11_USAGE_DEFAULT;
                 n.desc.MipLevels = 1; Hr(device_->CreateTexture2D(&n.desc, NULL, &n.texture), "copy_scratch");
                 scratch_.push_back(n); hit = &scratch_.back();
             }
             c->CopySubresourceRegion(hit->texture.Get(), 0, 0, 0, 0, s, 0, NULL); readable = hit->texture.Get();
         }
-        D3D11_SHADER_RESOURCE_VIEW_DESC v{}; v.Format = SourceView(sd.Format); v.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; v.Texture2D.MipLevels = 1;
+        D3D11_SHADER_RESOURCE_VIEW_DESC v{}; v.Format = viewFormat; v.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; v.Texture2D.MipLevels = 1;
         Need(v.Format != DXGI_FORMAT_UNKNOWN, "copy_source_format");
         ComPtr<ID3D11ShaderResourceView> view; Hr(device_->CreateShaderResourceView(readable, &v, &view), "copy_source_view");
         return view;
     }
     // CopyResource / CopySubresourceRegion semantics into a target of another 8-bit family (RGBA swapchains, A2)
-    void copy(ID3D11DeviceContext* c, ID3D11Texture2D* t, uint32_t dx, uint32_t dy, ID3D11Texture2D* s, const D3D11_BOX* box)
+    void copy(ID3D11DeviceContext* c, ID3D11Texture2D* t, uint32_t dx, uint32_t dy, ID3D11Texture2D* s,
+              const D3D11_BOX* box, bool opaque = false)
     {
         D3D11_TEXTURE2D_DESC sd{}; s->GetDesc(&sd);
         const uint32_t sx = box ? box->left : 0, sy = box ? box->top : 0, sw = box ? box->right - box->left : sd.Width, sh = box ? box->bottom - box->top : sd.Height;
         Need(sx + sw <= sd.Width && sy + sh <= sd.Height, "copy_source_rect");
         ComPtr<ID3D11ShaderResourceView> view = readable(c, s);
-        draw(c, t, dx, dy, sw, sh, view.Get(), sx, sy, sw, sh, sd.Width, sd.Height, false);
+        draw(c, t, dx, dy, sw, sh, view.Get(), sx, sy, sw, sh, sd.Width, sd.Height, opaque);
     }
 };
 

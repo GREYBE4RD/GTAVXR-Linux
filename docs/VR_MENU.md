@@ -24,33 +24,70 @@ In Story Mode with VR active, press **Menu** on the left controller. Release the
 | **Calibration → Weapons and support grips** | Adjust weapon position and rotation for each hand and set where the free hand supports the weapon. The left-hand values follow the right until you set them separately. When available, choose **Class / family** or **This weapon** before editing. |
 | **Calibration → Height** | Face forward and select **Recenter view and height**. Use left or right to adjust standing or seated height in 2 cm steps. **Measure height (3 s)** measures standing height without changing your view direction or manual offset. **Eye height** adjusts your distance from the floor in 1 cm steps and applies at launch. |
 | **Calibration → Current vehicle** | Adjust your head position for the current vehicle and seat. Make the adjustment from your usual seated posture. |
-| **Movement** | Choose smooth or snap turning, set the turn speed or angle, select headset- or hand-directed movement, and adjust darkening when your head moves into a wall. Under **Parachute**, choose Normal or Immersive mode and adjust camera behavior, dive view, or automatic deployment. |
+| **Movement** | Choose smooth or snap turning and set the turn speed or angle. **Walking direction** follows either your headset or the direction of your left controller. **Darken inside walls** covers the view when your head enters a wall or vehicle surface. Under **Parachute**, choose Normal or Immersive mode and adjust camera behavior, dive view, or automatic deployment. |
 | **Body view** | Choose how your first-person body appears in each situation. **Motion controls off** keeps the buttons active and returns aiming to your head direction and steering to the thumbsticks. You can apply the same setting to all contexts or reset it. |
-| **Weapons** | Choose a fixed or sliding support grip, one-handed weapon support, realistic or reduced recoil, reload mode by family, realistic left-hand reload, and reload highlights. You can adjust weapon strikes and collisions with the world. Under **Sniper scope**, choose the scope view and eye. [Weapons and dual-wielding](VR_CONTROLS.md#using-either-hand-and-dual-wielding) |
+| **Weapons** | Choose a fixed or sliding support grip, one-handed weapon support, realistic or reduced recoil, reload mode by family, realistic left-hand reload, and reload highlights. You can adjust weapon strikes and collisions with the world. Under **Sniper scope**, choose the scope view, eye, and angular size. [Weapons and dual-wielding](VR_CONTROLS.md#using-either-hand-and-dual-wielding) · [Realistic reloads](VR_CONTROLS.md#reloading) |
 | **Physics** | Adjust grab strength, contact push, and body effort. **Soft legs** changes contact with loose objects and bodies on the ground. **Advanced** sets the crouch threshold and the hand speed needed for a strike. You can reset forces and advanced settings from their respective screens. [Physical interaction](VR_CONTROLS.md#physical-interaction) |
-| **Vehicles** | Enable tracked steering or additional radio stations, choose camera and tracking by vehicle type, and adjust sensitivity and pitch for planes and helicopters. Level view and stick throttle while aiming are available where supported. |
-| **Controller buttons** | Choose **On foot**, **Vehicle**, or **Aircraft** and remap A, B, X, Y, L3, and R3. **Capture button** jumps to the next button you press. Copy a layout to the other contexts or reset only the current one. The menu, recentering, and gestures retain their own controls. |
-| **HUD and interfaces** | Configure the wrist HUD, hide the HUD while aiming, show or hide the map, wanted stars, notifications, subtitles, and other elements, and adjust wrist panels and buttons, hand indicators, button prompts, and menu sizes. |
+| **Vehicles** | Enable tracked steering or additional radio stations, choose camera and tracking by vehicle type, and adjust sensitivity and pitch for planes and helicopters. **Level** follows heading. **Full tilt** follows banking and pitch. **Horizon lock** follows pitch while keeping the horizon level. **Smoothed** follow filters bumps and impacts. **Controls in the vehicle frame** keeps banking from moving a control under a still hand. **Hardened level view** stabilizes the view during steep maneuvers. **Stick throttle while aiming** uses the left stick for acceleration, braking, and reverse while aiming from the driver's seat. |
+| **Controller buttons** | Choose **On foot**, **Vehicle**, or **Aircraft** and remap A, B, X, Y, L3, and R3. **Capture button** jumps to the next button you press. Copy a layout to the other contexts or reset only the current one. Use **VR action bindings** on this page to change the separate action assignments. Menu and recenter controls are available as usual. |
+| **HUD and interfaces** | Configure the wrist HUD, hide the HUD while aiming, show or hide the map, wanted stars, notifications, subtitles, and other elements, and adjust wrist panels and buttons, hand indicators, button prompts, native menu and app size, and pause screen size. **HUD visibility → Show all** restores visibility for every HUD element. |
 | **Haptics** | Adjust vibration strength and soft engine rumble. |
-| **Image and performance** | Adjust CPU/GPU synchronization, the game FPS limiter, graphics quality, damage flash, and screen filters. In **Neural graphics (DLSS)** you can check status, change Neural Rendering and its strength, or compare A/B. Choose the Super Resolution level in the Suite for your next launch. [Graphics](GRAPHICS.md) |
+| **Image and performance** | Choose **Two Frames** for default CPU/GPU synchronization, **Overlap** as an alternative, or **Serial** for diagnosis. The headset sets the pace with the **Game FPS limiter** off. **Damage flash** and **Game screen filters** control the visual effects of hits and scripted events. In **Neural graphics (DLSS)** you can check status, change Neural Rendering and its strength, or compare A/B. Choose the Super Resolution level in the Suite for your next launch. [Graphics](GRAPHICS.md) |
 | **Menu appearance** | Choose the menu language. Under **Colours**, adjust red, green, blue, and transparency for each element. Reset an individual color or the entire appearance. |
 | **Change native camera** | Switch the GTA camera from the VR menu. |
+
+### Set the VR action bindings
+
+Open **Settings → Controller buttons → VR action bindings**. Set the buttons for special ability, cover, stealth, opening the phone, switching the driving camera, and firing or cycling weapons in an armed aircraft. Use the [VR action bindings table](VR_CONTROLS.md#vr-action-bindings) for available gestures and phone navigation.
+
+### Choose the free-hand weapon buttons
+
+Open **Settings → Weapons → Free hand buttons**. **Trigger for support** uses the trigger to support a weapon and grip to grab reload parts. **Grip for support** exchanges those two actions on the free hand. The trigger on the hand holding the weapon still fires it. **Support grip → Fixed / Sliding** controls the position of the supporting hand.
+
+### Find HUD elements in VR
+
+Open **VR Menu → Settings → HUD and interfaces** and enable **Wrist HUD**. Under **HUD visibility**, enable **Subtitles (panel)** and turn subtitles on in GTA's own settings. Close the VR menu. Dialogue subtitles appear on a panel below the centre of your view. The subtitle panel can be moved, anchored or resized from **Panels by hand**.
+
+Mission objective text that GTA sends through its dialogue and print queue appears on the front panel. Help and activity prompts normally appear on the right wrist, alongside notifications. Native notifications may appear in front when the right wrist or the notification's live bounds are unavailable. Wanted stars normally sit below the minimap. If the map is absent, check the left wrist or the front HUD when its controller is untracked.
+
+In **HUD visibility**, check **Help / activities**, **Notifications**, **Wanted stars** and **Subtitles (panel)**. If a specific element is missing, note the mission, what text or icon you expected, and whether it showed in the desktop mirror.
 
 ### Position HUD panels with your hands
 
 1. Open **Settings → HUD and interfaces**. Under **Wrist panels**, choose the left wrist for the map and wanted stars or the right wrist for money and notifications. Adjust the whole panel or, where available, individual elements.
-2. To move a panel by hand, choose the edit action under **Panels by hand**. After the menu closes, reach for the panel and hold the grip button. Release the panel in the position you want, then press **B** to save and finish.
-3. Touch **Wrist buttons** with a finger from the other hand. You can hide GTAVXR hand indicators and keep the gameplay actions available.
+2. Under **Panels by hand**, select **Move panels by hand**. After the menu closes, reach for the panel and hold the grip button. Release it where you want it, then press **B** to save and finish. Use **Anchor**, **Face the head**, and **Size** to adjust how a panel follows you. **Copy setting**, **Paste setting**, and **Reset panel** let you reuse or restore placements.
+3. In a vehicle, enable **Vehicle panels** to place the map on the dashboard. **This model only** applies the placement to your current vehicle model. Turn it off to share the placement across that type of vehicle.
+4. Under **Wrist buttons**, assign an action to each slot. Select **None** to hide a slot. Touch the button with a finger from your empty hand. You can hide GTAVXR hand indicators and keep the gameplay actions available.
+
+### Move or resize subtitles
+
+1. Open **VR Menu → Settings → HUD and interfaces → Panels by hand**. Set **Panel** to **Subtitles**.
+2. Select **Move panels by hand**. A guide appears at the subtitle position if nobody is speaking. Hold either controller's side grip and move your hand. With **Subtitles** selected you can start the move from a comfortable position.
+3. Release the grip where you want the subtitles, then press **B** to save. Use **Size** to resize it and **Anchor → Head** to keep it in front of you. **Reset panel** restores the default. The game uses the placement for the current on-foot or vehicle layout.
 
 ### Graphics quality options
 
-**FXAA** and **Tessellation** apply immediately. **VR render scale** applies after restarting the game. The panel also shows shadows, soft shadows, reflections, MSAA, ambient occlusion, water, Post FX, grass, particles, and textures. Read-only rows and restart notices show the current values and when they apply. Change one editable option at a time to compare the result.
+**FXAA** and **Tessellation** apply immediately. **VR render scale** applies after restarting the game. The panel also shows shadows, soft shadows, reflections, MSAA, ambient occlusion, water, Post FX, grass, particles, and textures. Read-only rows and restart notices show the current values and when they apply. Check the graphics guide before changing settings in GTA's pause menu. [GTA graphics settings](GRAPHICS.md#gta-graphics-settings)
 
 ## Use the Trainer
 
 1. Open **VR Menu → Trainer** in Story Mode. Choose a category with the thumbstick and confirm with **A**. Press **B** to go back. In lists with favorites, use **Y** to add or remove the selected item.
-2. The character tools cover health, armor, wanted level, abilities, and appearance. The weapons tools cover inventory and ammo. The vehicle tools let you spawn vehicles by category and repair or clean your current vehicle. The weather and time tools let you change the weather and set or freeze the clock.
-3. Turn off active cheats before resuming a mission that depends on normal game rules. Refresh the catalogs to pick up installed vehicles, weapons, and models.
+2. Open the category for the change you want to make. The current character, vehicle, and installed content determine which choices are available.
+
+| Trainer page | What you can do |
+| --- | --- |
+| **Player Options** | Change health, armor, cash, wanted level, and abilities. Use **Model Changer** or **Wardrobe** to adjust appearance and **Cloning Options** to create or manage character copies. **Max All Stats (SP)** applies to the three Story protagonists and persists when you save. |
+| **Vehicle Options** | Spawn vehicles by category. Repair or clean your current vehicle, and use **Menyoo Customs** to change supported parts, paint, wheels, or lights. **Auto Drive** drives to a waypoint or a random destination. |
+| **Teleport Options** | Move to a map waypoint, mission objective, map blip, preset location, or custom coordinates. Some destinations and interiors depend on game state. |
+| **Weapon Options** | Manage weapons, ammo, attachments, tints, and parachutes. Use **Loadouts → Save Current Loadout** to save your equipment. Applying a loadout replaces the character's current weapons. |
+| **Weather Options** and **Time Options** | Change the weather or set and freeze the clock. |
+| **Settings** | Change the Trainer's language, theme, and colors. Use **Reset Toggles** to stop ongoing effects or **Reset All Cheats** to restore reversible values controlled by the Trainer. Cash, stats, spawns, and progress can persist after a reset. |
+
+### Enable the laser sight
+
+Open **VR Menu → Trainer → Weapon Options → Laser Sight**, then enable **Toggle**. Use **Set Colour** to change the line and dot. The effect follows the active weapon when the Trainer can read its aim. It is unavailable on melee weapons and throwables and pauses during reloading.
+
+Reset active cheats before resuming a mission that depends on normal game rules.
 
 Catalogs depend on installed content and the current context. If you want to preserve your main campaign, try changes to the game world in a separate save.
 

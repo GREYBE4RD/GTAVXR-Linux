@@ -11,6 +11,49 @@ namespace GtavxrSuite {
 
     // Headless engine tests over an owned fixture world. The "game" is this same EXE in --fixture-game mode.
     public static class EngineTests {
+        static void SuiteDataLocation(string root){
+            var env=Env.ForFixture(root);
+            var location=new DataLocation(env.DataRoot);
+            string chosen=Path.Combine(root,"Another library");
+            string profile=SafeFs.Under(env.Dir("profiles/a/user"),"Default/SGTA50000");
+            Directory.CreateDirectory(Path.GetDirectoryName(profile));
+            File.WriteAllText(profile,"save");
+            var cfg=env.LoadSettings();
+            cfg.dlss_dir=env.Dir("dlss");
+            env.SaveSettings(cfg);
+            File.WriteAllText(SafeFs.Under(cfg.dlss_dir,"model.bin"),"data");
+            var session=SafeFs.Under(env.Dir("sessions/test"),"session.json");
+            Json.New(session,new SessionRecord{phase="LAUNCHED"});
+            bool refused=false;
+            try{location.CopyAndSelect(env,chosen);}
+            catch(InvalidOperationException e){refused=e.Message=="RECOVERY_REQUIRED";}
+            Check(refused&&!Directory.Exists(chosen)&&location.Resolve()==env.DataRoot,"pending session leaves library intact");
+            Json.Atomic(session,new SessionRecord{phase="CLOSED"});
+            string setupGame=Path.Combine(root,"Legacy on another drive");
+            Directory.CreateDirectory(setupGame);
+            refused=false;
+            try{location.CopyAndSelect(env,Path.Combine(setupGame,"GTAVXR Suite"),setupGame);}
+            catch(InvalidDataException e){refused=e.Message=="DATA_LOCATION_OVERLAP";}
+            Check(refused&&location.Resolve()==env.DataRoot,"first-run game folder cannot contain the library");
+            location.CopyAndSelect(env,chosen,setupGame);
+            string copied=SafeFs.Under(chosen,"profiles/a/user/Default/SGTA50000");
+            Check(location.Resolve()==chosen&&SafeFs.Hash(profile)==SafeFs.Hash(copied),"verified copy selected, original kept");
+            var moved=Env.Product(chosen).LoadSettings();
+            Check(moved.dlss_dir==Path.Combine(chosen,"dlss"),"owned DLSS path follows data");
+            Check(moved.game_dir==setupGame,"first-run game folder survives reopening the Suite");
+            File.Delete(SafeFs.Under(chosen,"settings.json"));
+            refused=false;
+            try{location.Resolve();}
+            catch(IOException e){refused=e.Message.StartsWith("DATA_LOCATION_UNAVAILABLE",StringComparison.Ordinal);}
+            Check(refused&&File.Exists(profile),"unavailable library does not silently fall back");
+            File.WriteAllText(location.Pointer,"{ invalid");
+            try{location.Resolve();throw new Exception("corrupt pointer accepted");}
+            catch(InvalidDataException error){Check(error.Message=="DATA_LOCATION_INVALID","corrupt pointer is recoverable");}
+            location.SelectExisting(env.DataRoot);
+            Check(location.Resolve()==env.DataRoot&&Directory.GetFiles(root,"suite-location.json.invalid-*").Length==1,
+                "locating existing data replaces a broken pointer and keeps a copy");
+        }
+
         public static TestReport Run(string fresh){
             fresh=SafeFs.Root(fresh);if(Directory.Exists(fresh))throw new InvalidDataException("Fresh test folder required");
             Directory.CreateDirectory(fresh);
@@ -21,11 +64,45 @@ namespace GtavxrSuite {
                 catch(Exception e){rows.Add(new TestRow{name=name,pass=false,detail=e.ToString(),seconds=sw.Elapsed.TotalSeconds});}
             };
             t("save title parse",SaveTitle);
+            t("exact Story save selection, new story, imports and retryable capture",()=>StoryStartTests.Run(Path.Combine(fresh,"story-start")));
+            t("migrate public profiles in place and retire exclusive release files",()=>ReleaseLifecycleTests.Migration(Path.Combine(fresh,"release-migration")));
+            t("complete data removal preserves GTA and regular saves",()=>ReleaseLifecycleTests.Removal(Path.Combine(fresh,"release-removal")));
+            t("verified moved game can be removed without touching foreign files",()=>ReleaseLifecycleTests.MovedGame(Path.Combine(fresh,"moved-game")));
+            t("divergent libraries preserve both saves and allow migration after verified import",()=>ReleaseLifecycleTests.DivergentLibraries(Path.Combine(fresh,"divergent")));
+            t("public release channel checks version, official asset and download digest",()=>ReleaseLifecycleTests.Channel(Path.Combine(fresh,"release-channel")));
             t("display conversion",DisplayConvert);
+            t("disk budget reports the actual volume and required bytes",()=>{
+                long requested=1L<<50;
+                try{SafeFs.Budget(fresh,requested);}
+                catch(DiskSpaceException error){
+                    Check(error.Volume==Path.GetPathRoot(fresh)&&error.AvailableBytes>=0&&
+                        error.RequiredBytes==requested+SafeFs.Reserve,"disk space diagnostics");
+                    return;
+                }
+                throw new InvalidDataException("Expected the disk budget to reject the request");
+            });
+            t("Suite data location copies and verifies profiles, assets and preferences",()=>SuiteDataLocation(Path.Combine(fresh,"storage-location")));
             t("import ids",ImportIds);
             t("OpenXR capability: coexistence, renamed negotiation, wrong machine and path recovery",()=>RuntimeCapabilities(Path.Combine(fresh,"xr-caps")));
             t("OpenXR large library is admitted by its bounded export tables",()=>CompatibilityTests.LargeOpenXr(Path.Combine(fresh,"xr-large")));
             t("Platform requirements: native path buffer, ANSI, .NET and VC++",()=>CompatibilityTests.Platform(fresh));
+            t("elevated Play uses the active Windows runtime or explains a conflicting selection",()=>{
+                string path=Path.Combine(fresh,"xr-elevated");
+                Directory.CreateDirectory(path);
+                string active=Path.Combine(path,"active.json"), selected=Path.Combine(path,"selected.json");
+                string library=Path.Combine(path,"runtime.dll");
+                NeuralSuiteTests.FakeDll(library,"Fixture","OpenXR","1.0.0.0",new[]{"xrNegotiateLoaderRuntimeInterface"});
+                Json.New(active,new{runtime=new{name="Active",library_path="runtime.dll"}});
+                Json.New(selected,new{runtime=new{name="Selected",library_path="runtime.dll"}});
+                Check(XrRuntimes.ResolveForPlay(selected,active,false).error==null,"ordinary launch honors its selected manifest");
+                Check(XrRuntimes.ResolveForPlay(selected,active,true).error=="XR_ELEVATED_RUNTIME_MISMATCH",
+                    "elevated launch does not silently use a different runtime");
+                Check(XrRuntimes.ResolveForPlay(selected,null,true).error=="XR_ELEVATED_RUNTIME_MISMATCH",
+                    "elevated launch needs an active runtime when it cannot use the selection");
+                Check(XrRuntimes.ResolveForPlay(active,active,true).error==null&&
+                      XrRuntimes.ResolveForPlay(XrRuntimes.Auto,active,true).error==null,
+                    "matching selection and Automatic remain available");
+            });
             var w=new World(Path.Combine(fresh,"w1"));
             t("play stages profile and restores normal GTA",()=>w.PlayA());
             t("version switch installs only the difference + MVGA args",()=>w.PlayBWithMvga());
@@ -34,6 +111,9 @@ namespace GtavxrSuite {
             t("an agent's play lease never stops the user's Play",()=>w.BusyLease());
             t("recover before launch restores normal GTA only",()=>w.RecoverBeforeLaunch());
             t("recover after a crash keeps the progress",()=>w.RecoverAfterLaunch());
+            t("recovery uses original Documents after redirection and rejects a replacement directory",()=>
+                new World(Path.Combine(fresh,"redirect-recover")).RecoverAfterLaunch(redirectDocuments:true));
+            t("recover a missing profile without losing progress",()=>new World(Path.Combine(fresh,"recover-missing-profile")).RecoverAfterLaunch(missingProfile:true));
             t("recover when start was requested before the process receipt keeps progress",()=>w.RecoverAfterLaunch(true));
             t("recover an unconfirmed start without new progress preserves the profile",()=>w.RecoverAfterLaunch(true,true));
             t("interrupted game change finishes on recover",()=>w.RecoverLayer());
@@ -69,6 +149,14 @@ namespace GtavxrSuite {
             t(".asi mods: import, version check, game-folder session beside the player's files, capture, crash recover, conflicts listed before Play",()=>w8.AsiModPlay());
             t("script mod ini: one key set in its section, line ends and other lines kept",IniSet);
             t("game start: an unreadable process image is retried, a different image fails at once",ImageRetry);
+            t("public version labels keep legacy build numbers internal",()=>{
+                var release=new VersionManifest{id="gtavxr-1-0-2",build="173",title="GTAVXR 1.0.2",title_en="GTAVXR 1.0.2",embedded_release=true};
+                Check(release.VersionBadge()=="1.0.2"&&release.DisplayTitle("en")=="GTAVXR 1.0.2"&&
+                    release.DisplayTitle("es")=="GTAVXR 1.0.2"&&release.Label()=="GTAVXR 1.0.2"&&release.build=="173",
+                    "existing embedded manifests display only the public label");
+                var legacy=new VersionManifest{id="173-v76",build="173",title="v76"};
+                Check(legacy.VersionBadge()=="173"&&legacy.DisplayTitle("es")=="173 v76","historical references remain distinguishable");
+            });
             t("gameconfig pools above the EXE's 16-bit limit are lowered and reported",PoolClamp);
             t("Legacy 3889 check: plugins accepted, archive rewritten by a mod tool accepted and noted, non-archive and other executable refused",()=>LegacyGamePolicy.Fixture(Path.Combine(fresh,"policy")));
             NeuralSuiteTests.Add(t,Path.Combine(fresh,"neural"));
@@ -253,6 +341,19 @@ namespace GtavxrSuite {
             Check(o.Contains("<PoolName>MapDataStore</PoolName>\r\n <PoolSize value=\"65534\" />")&&o.Contains("<PoolSize value=\"46500\" />")&&o.Contains("<PoolSize value=\"400000\" />"),"only MapDataStore lowered, got "+o.Replace("\r\n","|"));
             Check(changed.Count==1&&changed[0].StartsWith("PoolSize MapDataStore 155020 -> 65534",StringComparison.Ordinal),"reported");
             Check(Content.ContentBuilder.ClampPools(o,new List<string>())==o,"a value within the limit is left alone");
+
+            string incident="<Pools><Item><PoolName>Building</PoolName><PoolSize value=\"80000\" /></Item>"+
+                "<Item><PoolName>Dummy Object</PoolName><PoolSize value=\"75000\" /></Item>"+
+                "<Item><PoolName>PortalInst</PoolName><PoolSize value=\"900\" /></Item></Pools>";
+            changed.Clear();
+            string bounded=Content.ContentBuilder.ClampPools(incident,changed);
+            Check(bounded==incident.Replace("80000","65536").Replace("75000","65536"),
+                "out-of-range streaming entity pools are capped and PortalInst is preserved");
+            Check(changed.Count==2&&changed[0].Contains("Building 80000 -> 65536")&&
+                changed[1].Contains("Dummy Object 75000 -> 65536"),"both pool changes are reported");
+            changed.Clear();
+            Check(Content.ContentBuilder.ClampPools(bounded,changed)==bounded&&changed.Count==0,
+                "65536 slots retain the last representable index 65535");
         }
         static void IniSet(){
             string a="[Settings]\r\nGym Blips=1\r\nGym Radio=RADIO_02_POP";
@@ -389,7 +490,7 @@ namespace GtavxrSuite {
                 Check(new PlaySession(env).Unfinished().Count==0,"nothing left unfinished");
                 Check(!File.Exists(Path.Combine(env.DevRepo,"local-cache","agent-locks","play-runtime.lease")),"lease released");
             }
-            public void RecoverAfterLaunch(bool interruptedBeforeReceipt=false,bool noChanges=false){
+            public void RecoverAfterLaunch(bool interruptedBeforeReceipt=false,bool noChanges=false,bool missingProfile=false,bool redirectDocuments=false){
                 string before=Sig(Normal()),vrBefore=NormalVr();
                 string profileBefore=Sig(UserTree.Snapshot(lib.UserDir(a.id)));
                 string profileIni=SafeFs.Hash(lib.VrSettingsFile(a.id));
@@ -414,7 +515,41 @@ namespace GtavxrSuite {
                     Json.Atomic(SafeFs.Under(env.Dir("sessions"),beforeStart.id+"/session.json"),beforeStart);
                 }
                 Check(Sig(Normal())!=before,"profile still staged");
-                Check(new PlaySession(env).Recover()=="OK","recover ok");
+                if(redirectDocuments){
+                    string original=env.UserDataDir;
+                    string moved=original+"-interrupted";
+                    string other=Path.Combine(root,"Redirected Documents","GTA V");
+                    Write(other,"Default/SGTA50000",FakeSave("Other campaign (45.0%)",8192));
+                    env.UserDataDir=other;
+                    string otherBefore=Sig(Normal());
+                    Directory.Move(original,moved);
+                    Write(original,"Default/SGTA50000",FakeSave("Replacement (80.0%)",8192));
+                    string substitute=SafeFs.Under(original,"Default/SGTA50000");
+                    string substituteHash=SafeFs.Hash(substitute);
+                    try{new PlaySession(env).Recover();throw new Exception("recovery accepted another directory");}
+                    catch(IOException error){Check(error.Message.StartsWith("RECOVERY_SAVE_LOCATION_CHANGED:",StringComparison.Ordinal),"refusal identifies original path");}
+                    Check(SafeFs.Hash(substitute)==substituteHash&&new PlaySession(env).Unfinished().Count==1,"replacement left untouched; recovery still pending");
+                    Directory.Move(original,original+"-replacement");
+                    Directory.Move(moved,original);
+                    Check(new PlaySession(env).Recover()=="OK"&&Sig(Normal())==otherBefore,"recovery leaves redirected Documents untouched");
+                    env.UserDataDir=original;
+                    Check(Sig(Normal())==before&&NormalVr()==vrBefore&&SaveInfo.Latest(lib.UserDir(a.id)).mission=="Tras corte",
+                        "original Documents restored and VR progress captured");
+                    return;
+                }
+                if(missingProfile)lib.DeleteProfile(a.id);
+                string recovery=new PlaySession(env).Recover();
+                if(missingProfile){
+                    string dir=SafeFs.Under(env.Dir("sessions"),open[0].id+"/recovered-profile");
+                    Check(recovery=="RECOVERED_PROFILE:"+dir,"missing profile recovery reports backup location");
+                    var save=SaveInfo.Latest(SafeFs.Under(dir,"user"));
+                    Check(save!=null&&save.mission=="Tras corte","crash-time progress recovered separately");
+                    Check(File.Exists(SafeFs.Under(dir,"vr-settings.ini")),"VR settings recovered separately");
+                    Check(Sig(Normal())==before&&NormalVr()==vrBefore,"retail restored");
+                    Check(new PlaySession(env).Recover()=="OK","already closed recovery is idempotent");
+                    return;
+                }
+                Check(recovery=="OK","recover ok");
                 Check(Sig(Normal())==before&&NormalVr()==vrBefore,"normal GTA restored by recover");
                 if(noChanges){
                     var recovered=Json.Read<SessionRecord>(SafeFs.Under(env.Dir("sessions"),beforeStart.id+"/session.json"));

@@ -1,8 +1,5 @@
 # VR graphics
 
-> [!IMPORTANT]
-> DLSS Super Resolution and Neural Rendering require you to supply your own NVIDIA files compatible with your GPU. Choose **Native** to play without those files.
-
 Open your profile under **Play → VR settings → Graphics**. Start with **Native** as a baseline, then compare each change in the same Story Mode location.
 
 ## Presets and options
@@ -18,10 +15,11 @@ Open your profile under **Play → VR settings → Graphics**. Start with **Nati
 
 **Neural Rendering (NR)** adds a pass per eye. **Neural intensity** controls the blend from 0 to 100. In-game, use **VR Menu → Settings → Image and performance → Neural graphics (DLSS)** to change NR and its strength live, compare A/B, or check the active mode. Changes are saved to the profile. [VR menu](VR_MENU.md)
 
-## Set up DLSS files
+## GTA graphics settings
 
-> [!IMPORTANT]
-> Before enabling DLSS, obtain NVIDIA files compatible with your GPU. Supply **nvngx_dlss.dll** for Super Resolution and add **nvngx_dlssnr.dll** to use Neural Rendering.
+Keep **DirectX 11** and **Shader Quality: High** or **Very High** as the baseline. If outdoor shadows flicker between the eyes, switch **Soft Shadows** away from **NVIDIA PCSS**. If the game crashes while applying changes, record the setting and value. **MSAA** and **Post FX** can reload render resources. Apply major graphics changes outside VR and restart the game when GTA asks. [Startup and graphics troubleshooting](TROUBLESHOOTING.md)
+
+## Set up DLSS files
 
 1. Open **Settings → DLSS** and select the folder containing your compatible NVIDIA files. You can also open the Suite's **dlss** folder and place the files there.
 2. For **Super Resolution**, the Suite looks for **nvngx_dlss.dll**. For **Neural Rendering**, it also looks for **nvngx_dlssnr.dll**.

@@ -19,10 +19,10 @@ namespace GtavxrSuite {
             if(test){var tape=U.Tape(L.S("tape.flight"),22);tape.Margin=new Thickness(0,0,0,16);col.Children.Add(tape);}
             var head=new DockPanel{LastChildFill=false};
             head.Children.Add(U.Label(L.S("board.title"),Theme.Sign));
-            var gate=U.Label(L.S("stub.gate")+" "+(v==null?"":v.build),Theme.Mist);DockPanel.SetDock(gate,Dock.Right);head.Children.Add(gate);
+            var gate=U.Label(L.S("stub.gate")+" "+(v==null?"":v.VersionBadge()),Theme.Mist);DockPanel.SetDock(gate,Dock.Right);head.Children.Add(gate);
             col.Children.Add(head);
             var name=new FlapText(p.name,22,Theme.FlapInk,30){Margin=new Thickness(0,12,0,0)};col.Children.Add(name);
-            var sub=U.Text(v==null?"":(v.build+" "+v.Title(L.Lang)).ToUpperInvariant(),15,Theme.Mist,true,FontWeights.SemiBold);sub.Margin=new Thickness(2,8,0,22);col.Children.Add(sub);
+            var sub=U.Text(v==null?"":v.DisplayTitle(L.Lang).ToUpperInvariant(),15,Theme.Mist,true,FontWeights.SemiBold);sub.Margin=new Thickness(2,8,0,22);col.Children.Add(sub);
             col.Children.Add(stateRow);
             bar=new ProgressBar{Height=4,Minimum=0,Maximum=1,Value=0,IsIndeterminate=true,Foreground=Theme.B(Theme.Sign),Background=Theme.B(Theme.Flap),BorderThickness=new Thickness(0),Margin=new Thickness(0,18,0,12)};
             col.Children.Add(bar);

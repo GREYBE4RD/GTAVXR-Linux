@@ -93,7 +93,22 @@ namespace GtavxrSuite {
             if(v.mvga=="required"&&!list.Any(m=>m.kind=="mvga-native")){var mv=Mods.FirstOrDefault(m=>m.kind=="mvga-native"&&m.loadable);if(mv!=null)list.Add(mv);}
             return list;
         }
-        public SaveInfo LatestSave(Profile p){try{return SaveInfo.Latest(Lib.UserDir(p.id));}catch(Exception){return null;}}
+        public SaveInfo LatestSave(Profile p){
+            try{
+                string user=Lib.UserDir(p.id);
+                if(!EmbeddedRelease.HasSessionFixes(p.version))return SaveInfo.Latest(user);
+                var selection=StoryStart.Resolve(p);
+                if(selection.choice==StoryStart.NewStory)return null;
+                if(selection.source!=null)return SaveInfo.Read(SafeFs.Under(user,selection.source.relative));
+                var files=StoryStart.Choices(p);
+                var local=files.Where(file=>file.relative.StartsWith("Default/",StringComparison.OrdinalIgnoreCase)).ToList();
+                var accounts=SaveInfo.RetailAccounts(files);
+                IEnumerable<SaveFileRef> displayed=local.Count>0?local.AsEnumerable():
+                    accounts.Count==1?accounts.Single().AsEnumerable():accounts[p.imported_save_account];
+                return displayed.Select(file=>SaveInfo.Read(SafeFs.Under(user,file.relative))).Where(save=>save!=null)
+                    .OrderByDescending(save=>save.written_utc).FirstOrDefault();
+            }catch(Exception){return null;}
+        }
         public string ModsShort(Profile p){
             var a=ActiveMods(p);if(a.Count==0)return "—";
             return String.Join(" ",a.Select(m=>m.kind=="mvga-native"?"MVGA":new string(m.name.Where(Char.IsLetterOrDigit).Take(6).ToArray())));

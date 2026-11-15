@@ -37,7 +37,7 @@ namespace GtavxrSuite {
                 PlayView.EditorOpen=true;PlayView.EditorTab=view=="play-version"?"version":view=="play-graphics"?"vr":view=="play-testprofile"||view.StartsWith("play-gate-")?"profile":"mods";
                 if(view=="play-test"||view=="play-testprofile"||view=="flight-result"){var t=st.Profiles.FirstOrDefault(p=>p.test);if(t!=null)st.Settings.selected_profile=t.id;}
                 PlayView.PersonalizeMod=view=="play-personalize-wov"?"demo-wov":view=="play-personalize-plus"?"demo-wovplus":null;
-            }else shell.Section=view=="try-mod"?"mods":view;
+            }else shell.Section=view=="try-mod"||view=="mods-guide"?"mods":view;
             if(view=="firstrun")st.Settings.first_run_done=false;
             shell.Refresh();
             if(view=="newprofile")shell.NewProfile();
@@ -94,7 +94,7 @@ namespace GtavxrSuite {
                 files=new List<FileRef>{new FileRef{path="gtavxr_mvga147/common/x",sha256=new string('A',64),bytes=33554432}},args=new List<string>{"-gtavxrMvga"}};
             var drive=new ModManifest{id="mod-drivev",name="DriveV",version="7.5",category="driving",loadable=false,kind="archive",family="drivev",files=new List<FileRef>(),archive=new FileRef{path="DriveV.zip",sha256=new string('B',64),bytes=22999437}};
             var forests=new ModManifest{id="mod-forests",name="Forests of San Andreas",version="5.7",category="map",loadable=false,kind="archive",family="forests",files=new List<FileRef>(),archive=new FileRef{path="f.zip",sha256=new string('C',64),bytes=412000000}};
-            lib.SaveMod(mvga);lib.SaveMod(drive);lib.SaveMod(forests);
+            if(view!="mods-guide"){lib.SaveMod(mvga);lib.SaveMod(drive);lib.SaveMod(forests);}
             var imp=new Importers(env);
             Func<string,string,string,int,bool,Profile> mk=(name,ver,title,color,vr)=>{
                 string u=Path.Combine(root,"u-"+Ids.New());Directory.CreateDirectory(Path.Combine(u,"Default"));
@@ -105,7 +105,7 @@ namespace GtavxrSuite {
             };
             var a=mk(lang=="en"?"VR Story":"Historia VR","125-dual",lang=="en"?"(Autosave) Complications (22.5%) - x":"(Autoguardado) Cambios (22.5%) - x",0,true);
             var b=mk(lang=="en"?"No mods":"Sin mods","125-dual",lang=="en"?"Franklin and Lamar (4.1%) - x":"Franklin y Lamar (4.1%) - x",2,true);
-            var c=mk(lang=="en"?"Test 155":"Prueba 155","155v2",lang=="en"?"Pulling Favors (12.0%) - x":"Favores (12.0%) - x",1,false);c=lib.Profile(c.id);c.mods.Add(mvga.id);lib.SaveProfile(c);lib.SetTest(c.id,true);
+            var c=mk(lang=="en"?"Test 155":"Prueba 155","155v2",lang=="en"?"Pulling Favors (12.0%) - x":"Favores (12.0%) - x",1,false);c=lib.Profile(c.id);if(view!="mods-guide")c.mods.Add(mvga.id);lib.SaveProfile(c);lib.SetTest(c.id,true);
             a=lib.Profile(a.id);a.last_played_utc=DateTime.UtcNow.AddDays(-2).ToString("o");
             if(view.StartsWith("play-gate-"))a.image=view.Substring("play-gate-".Length);   // --render play-gate-<id>: that profile picture
             lib.SaveProfile(a);
@@ -141,7 +141,7 @@ namespace GtavxrSuite {
             Json.Atomic(Path.Combine(env.Dir("game"),"state.json"),new GameState{schema="gtavxr-suite2-game-v1",game_dir=env.GameDir,version="125-dual",mods=new List<string>(),files=new List<FileRef>{new FileRef{path="x",sha256=new string('D',64),bytes=251658240}},dirs=new List<string>(),updated_utc=DateTime.UtcNow.ToString("o")});
             env.GameDir=@"C:\Program Files (x86)\Steam\steamapps\common\Grand Theft Auto V";
             env.OpenXrManifest=@"C:\Program Files\Virtual Desktop Streamer\OpenXR\virtualdesktop-openxr.json";
-            env.SaveSettings(new SuiteSettings{language=lang,first_run_done=true,dev_mode=view!="play"&&view!="mods"&&view!="play-content"&&!view.StartsWith("play-personalize-"),selected_profile=selected,game_dir=env.GameDir});
+            env.SaveSettings(new SuiteSettings{language=lang,first_run_done=true,dev_mode=view!="play"&&view!="mods"&&view!="mods-guide"&&view!="play-content"&&!view.StartsWith("play-personalize-"),selected_profile=selected,game_dir=env.GameDir});
             return env;
         }
     }

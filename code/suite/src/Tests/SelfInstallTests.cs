@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Diagnostics;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace GtavxrSuite {
     // Install + local-channel update over owned folders only (no real Start menu, Desktop or Programs folder).
@@ -26,6 +27,34 @@ namespace GtavxrSuite {
                 var dead=Process.Start(new ProcessStartInfo("cmd.exe","/c exit 0"){UseShellExecute=false,CreateNoWindow=true});dead.WaitForExit();int pid=dead.Id;dead.Dispose();
                 var p=Process.Start(new ProcessStartInfo(newer,ProcessText.Join(new[]{"--finish-update",installed,pid.ToString(),"no-restart"})){UseShellExecute=false,CreateNoWindow=true});
                 p.WaitForExit(60000);return p.ExitCode==0&&SafeFs.Hash(installed)==SafeFs.Hash(newer);});
+            t("full removal retries a locked installed launcher and cleans both copies and shortcuts",()=>{
+                string portable=Path.Combine(fresh,"portable.exe");
+                File.Copy(Program.SelfPath,portable);
+                SelfInstall.Install(app,start,desk);
+                string hash=SafeFs.Hash(portable);
+                long bytes=new FileInfo(portable).Length;
+                using(File.Open(installed,FileMode.Open,FileAccess.Read,FileShare.Read)){
+                    try{CompleteRemoval.RemoveLauncherFiles(portable,hash,bytes,installed,new[]{start,desk});return false;}
+                    catch(IOException){
+                        if(!File.Exists(portable)||!File.Exists(installed)||!File.Exists(Path.Combine(start,"GTAVXR.lnk")))return false;
+                    }
+                }
+                CompleteRemoval.RemoveLauncherFiles(portable,hash,bytes,installed,new[]{start,desk});
+                return !File.Exists(portable)&&!File.Exists(installed)&&
+                       !File.Exists(Path.Combine(start,"GTAVXR.lnk"))&&!File.Exists(Path.Combine(desk,"GTAVXR.lnk"));
+            });
+            t("helper cleanup retries until its temporary executable can be deleted",()=>{
+                string stage=Path.Combine(fresh,"gtavxr-remove-fixture");
+                Directory.CreateDirectory(stage);
+                string temporary=Path.Combine(stage,"GTAVXR.exe");
+                File.Copy(Program.SelfPath,temporary);
+                using(File.Open(temporary,FileMode.Open,FileAccess.Read,FileShare.Read)){
+                    CompleteRemoval.StartHelperCleanup(stage,temporary);
+                    Thread.Sleep(500);
+                    if(!File.Exists(temporary))return false;
+                }
+                return SpinWait.SpinUntil(()=>!Directory.Exists(stage),12000);
+            });
             return new{status=failed==0?"PASS":"FAIL",failed,rows,real_start_menu_touched=false};
         }
     }

@@ -15,7 +15,7 @@ inline void toggle(GxUiVisibility&p,unsigned kind){if(kind<Count)p.mask^=1u<<kin
 inline bool product(const GxUiVisibility&p,const GxUiItem&r){
     if(r.route==GX_UI_MENU_PANEL||gx_native_ui::handRoute(r.route))return true;
     if(gx_native_ui::wantedItem(r))return enabled(p,gx_ui_element::Wanted);
-    if(r.route==GX_UI_PANEL&&r.id!=15)return enabled(p,Notices);
+    if(r.route==GX_UI_PANEL&&r.id!=15&&r.id!=GX_UI_FEED)return enabled(p,Notices);
     return enabled(p,gx_ui_element::kind(r));
 }
 }

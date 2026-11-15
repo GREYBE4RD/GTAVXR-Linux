@@ -284,7 +284,7 @@ namespace GtavxrSuite {
         }
         public const int Palette=6;
         internal Profile CopyForEmbeddedRelease(Profile previous,string versionId){
-            var profile=Duplicate(previous.id,previous.name+" · GTAVXR 1.0");
+            var profile=Duplicate(previous.id,previous.name+" · GTAVXR "+SuiteApp.Version,true);
             profile.version=versionId;
             profile.options=previous.options==null?null:new Dictionary<string,string>(previous.options);
             foreach(var pair in new[]{new[]{lib.ScriptsDir(previous.id),lib.ScriptsDir(profile.id)},
@@ -297,12 +297,9 @@ namespace GtavxrSuite {
         }
         // New profile from the player's normal GTA saves (copy) or an empty new story.
         public Profile CreateProfile(string name,string versionId,bool copyNormalSaves,string copyVrFromProfile){
-            List<SaveFileRef> files;string src;
-            if(copyNormalSaves){src=env.UserDataDir;files=UserTree.Snapshot(src);}
-            else{
-                // New story: keep only settings.xml so graphics options carry over.
-                src=env.UserDataDir;files=UserTree.Snapshot(src).Where(f=>f.relative=="settings.xml").ToList();
-            }
+            string src=env.UserDataDir;
+            var files=UserTree.Snapshot(src,!copyNormalSaves||EmbeddedRelease.UsesStoryData(versionId));
+            if(!copyNormalSaves)files=files.Where(f=>f.relative=="settings.xml").ToList();
             string ini=null;if(copyVrFromProfile!=null){string f=lib.VrSettingsFile(copyVrFromProfile);if(File.Exists(f))ini=f;}
             var p=CreateFrom(name,versionId,src,files,ini,copyNormalSaves?"new-copy-normal":"new-story");
             if(ini==null){
@@ -320,18 +317,62 @@ namespace GtavxrSuite {
         // Replace a profile's saves with a copy of normal GTA's (or a new story). The current ones go to the profile history first.
         public void ResetSaves(string id,bool copyNormal){
             var p=lib.Profile(id);string user=lib.UserDir(id);
+            if(copyNormal&&EmbeddedRelease.HasSessionFixes(p.version)){
+                using(var library=GameScope.Acquire(env.DataRoot)){
+                    var session=new PlaySession(env);
+                    if(session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                    if(session.Unfinished().Count!=0||new GameLayer(env).Pending)
+                        throw new InvalidOperationException("RECOVERY_REQUIRED");
+                    p=lib.Profile(id);
+                    using(var retail=Directory.Exists(env.UserDataDir)?GameScope.Acquire(env.UserDataDir):null)
+                        StoryStart.Import(env.UserDataDir,user,p);
+                    lib.SaveProfile(p);
+                }
+                return;
+            }
+            bool storyOnly=EmbeddedRelease.UsesStoryData(p.version);
+            var retained=storyOnly?p.user.Where(f=>!UserTree.IsStoryData(f.relative)).ToList():new List<SaveFileRef>();
             string tag=DateTime.UtcNow.ToString("yyyyMMddTHHmmss")+"-reset";
             lib.KeepCopy(p,"history/"+tag,tag);
             string history=SafeFs.Under(lib.CopyDir(id,"history/"+tag),"user");
-            var files=UserTree.Snapshot(env.UserDataDir);
+            var files=UserTree.Snapshot(env.UserDataDir,storyOnly||!copyNormal);
             if(!copyNormal){
                 // Keep the profile's own settings.xml if it has one, else the normal one; no saves.
                 bool own=p.user!=null&&p.user.Any(f=>f.relative=="settings.xml");
                 var keep=own?p.user.Where(f=>f.relative=="settings.xml").ToList():files.Where(f=>f.relative=="settings.xml").ToList();
                 string src=own?history:env.UserDataDir;
-                UserTree.Mirror(src,keep,user);p.user=keep;
-            }else{UserTree.Mirror(env.UserDataDir,files,user);p.user=files;}
-            UserTree.Verify(user,p.user);lib.SaveProfile(p);lib.PruneHistory(id,6);
+                UserTree.Mirror(src,keep,user,storyOnly);p.user=keep;
+            }else{UserTree.Mirror(env.UserDataDir,files,user,storyOnly);p.user=files;}
+            p.imported_save_account=null;
+            p.story_start=null;
+            UserTree.Verify(user,p.user);
+            p.user.AddRange(retained);
+            lib.SaveProfile(p);lib.PruneHistory(id,6);
+        }
+
+        internal void MergeStorySaves(string id,string sourceLibrary,string sourceId) {
+            sourceLibrary=SafeFs.Root(sourceLibrary);
+            if(String.Equals(sourceLibrary,env.DataRoot,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Select a different Suite library.");
+            using(var targetScope=GameScope.Acquire(env.DataRoot))
+            using(var sourceScope=GameScope.Acquire(sourceLibrary)){
+                if(!File.Exists(SafeFs.Under(sourceLibrary,"settings.json")))
+                    throw new InvalidDataException("Select an existing Suite library.");
+                var sourceEnv=Env.Product(sourceLibrary);
+                foreach(var library in new[]{env,sourceEnv}){
+                    var session=new PlaySession(library);
+                    if(session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                    if(session.Unfinished().Count!=0||new GameLayer(library).Pending)
+                        throw new InvalidOperationException("RECOVERY_REQUIRED");
+                }
+                var profile=lib.Profile(id);
+                string folder=SafeFs.Under(sourceLibrary,"profiles/"+sourceId);
+                var source=Json.Read<Profile>(SafeFs.Under(folder,"profile.json"));
+                if(source==null||source.schema!="gtavxr-suite2-profile-v1"||source.id!=sourceId)
+                    throw new InvalidDataException("Invalid source profile.");
+                StoryStart.ImportFromProfile(SafeFs.Under(folder,"user"),lib.UserDir(id),profile,source);
+                lib.SaveProfile(profile);
+            }
         }
         // New test profile: same as a normal new profile (or a copy of another), marked test, with its starting point.
         public Profile CreateTestProfile(string name,string versionId,string copyOf,bool copyNormal){
@@ -344,17 +385,22 @@ namespace GtavxrSuite {
         // "Volver al punto de partida" of a test profile.
         public void BackToStart(string profileId){lib.RestoreCopy(profileId,"start",DateTime.UtcNow.ToString("yyyyMMddTHHmmss")+"-start");}
         // "Pasar a mi perfil": the other profile takes this test profile's version and mods (its saves do not change).
-        // The mods count as tested from now on.
+        // Keep the existing timestamp as a record of promotion from a test profile.
         public void Promote(string testProfileId,string targetProfileId){
             var a=lib.Profile(testProfileId);var b=lib.Profile(targetProfileId);
             if(a==null||b==null||a.id==b.id)throw new InvalidDataException("Profile not found");
             b.version=a.version;b.mods=new List<string>(a.mods);lib.SaveProfile(b);
             foreach(string id in a.mods){var m=lib.Mod(id);if(m!=null&&m.tested_utc==null){m.tested_utc=DateTime.UtcNow.ToString("o");lib.SaveMod(m);}}
         }
-        public Profile Duplicate(string id,string name){
+        public Profile Duplicate(string id,string name){return Duplicate(id,name,false);}
+
+        private Profile Duplicate(string id,string name,bool storyOnly){
             var p=lib.Profile(id);string ini=lib.VrSettingsFile(id);
-            var copy=CreateFrom(name,p.version,lib.UserDir(id),p.user,p.has_vr_settings&&File.Exists(ini)?ini:null,"copy");
-            copy.mods=new List<string>(p.mods);copy.color=(p.color+1)%Palette;copy.image=p.image;lib.SaveProfile(copy);return copy;
+            var files=storyOnly||EmbeddedRelease.UsesStoryData(p.version)?p.user.Where(f=>UserTree.IsStoryData(f.relative)||
+                f.relative.StartsWith(StoryStart.Archive,StringComparison.OrdinalIgnoreCase)).ToList():p.user;
+            var copy=CreateFrom(name,p.version,lib.UserDir(id),files,p.has_vr_settings&&File.Exists(ini)?ini:null,"copy");
+            copy.mods=new List<string>(p.mods);copy.color=(p.color+1)%Palette;copy.image=p.image;
+            copy.imported_save_account=p.imported_save_account;copy.story_start=p.story_start;lib.SaveProfile(copy);return copy;
         }
     }
 }

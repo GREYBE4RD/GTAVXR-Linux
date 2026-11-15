@@ -6,6 +6,7 @@
 
 namespace {
 thread_local std::string error_text;
+native_xr::PreopenedXr preopened; // Once per process, before the first SteamVR session.
 struct Bridge {
     native_xr::Session xr;
     HANDLE log=INVALID_HANDLE_VALUE;
@@ -59,7 +60,7 @@ int GX_CALL create(const GxConfig*c,void**out) noexcept {
                GetModuleFileNameW(self,module,MAX_PATH)<MAX_PATH){std::wstring m(module);p->xr.chainBridgeDir=m.substr(0,m.find_last_of(L"/\\"));}}
         p->xr.perf147.init(false,p->xr.log); // build148: perf telemetry OFF (user closed the performance section)
         if(!p->xr.compact_logging)p->xr.first_image=[p,directory](ID3D11Texture2D*t,unsigned e){native_xr::save_first_image(p->xr,t,e,directory);};
-        return guarded(p,[&](Bridge&v){v.xr.initialize(static_cast<ID3D11Device*>(c->d3d_device),c->width,c->height,c->loader_path);});
+        return guarded(p,[&](Bridge&v){v.xr.initialize(static_cast<ID3D11Device*>(c->d3d_device),c->width,c->height,c->loader_path,&preopened);});
     }catch(const std::exception&e){error_text=e.what();return 1;}catch(...){error_text="CREATE_EXCEPTION";return 1;}
 }
 int GX_CALL begin(void*h,uint64_t generation,GxFrame*out) noexcept {
@@ -124,7 +125,14 @@ extern "C" __declspec(dllexport) int GX_CALL GTAVXR_SetUiElementProfiles(void*h,
 }
 // build167 items 1/2/3: where each HUD panel is drawn (anchor, offset, scale, face the head) + the vehicle anchor pose;
 // ABI 2 (source-v16) adds the wrist buttons card, so the export name changed with the struct
-extern "C" __declspec(dllexport) int GX_CALL GtavxrSetPanelPlacements2(void*h,const GxPanelPlacements*state) noexcept {
+extern "C" __declspec(dllexport) int GX_CALL GtavxrSetPanelPlacements2(void*h,const GxPanelPlacements2*state) noexcept {
+    return guarded(h,[&](Bridge&b){
+        GxPanelPlacements next;
+        native_xr::demand(state&&gx_panel::upgrade(*state,next),"PANEL_PLACEMENT_V2_ABI");
+        b.xr.set_panel_placements(next);
+    });
+}
+extern "C" __declspec(dllexport) int GX_CALL GtavxrSetPanelPlacements3(void*h,const GxPanelPlacements*state) noexcept {
     return guarded(h,[&](Bridge&b){native_xr::demand(state,"PANEL_PLACEMENT_POINTER");b.xr.set_panel_placements(*state);});
 }
 // build167 item 4: the head inside a wall, 0 = clear .. 1 = black world (sent every frame while dark)
@@ -157,8 +165,19 @@ extern "C" __declspec(dllexport) int GX_CALL GTAVXR_LocateAim(void*h,const GxFra
 extern "C" __declspec(dllexport) int GX_CALL GtavxrQueryEyeSize1(const wchar_t*loader,const GxEyeSizeRequest*r,GxEyeSizeResult*out) noexcept {
     if(!r||!out||r->size!=sizeof(GxEyeSizeRequest)||r->version!=1||out->size!=sizeof(GxEyeSizeResult)||out->version!=1)return GX_EYE_ABI;
     try{
-        OpenXrApi api;if(!loader||!*loader||!api.Load(loader)){out->status=GX_EYE_LOADER;return GX_EYE_LOADER;}
-        const uint32_t status=native_xr::query_eye_size(api,*r,*out);api.Unload();return int(status);
+        if(!loader||!*loader){out->status=GX_EYE_LOADER;return GX_EYE_LOADER;}
+        const bool retain=native_xr::steamvr_bootstrap_requested()&&!preopened.instance;
+        // Allocate the path before taking ownership of any runtime handle.
+        std::wstring path=retain?loader:L"";
+        OpenXrApi api;
+        if(!api.Load(loader)){api.Unload();out->status=GX_EYE_LOADER;return GX_EYE_LOADER;}
+        XrInstance instance=XR_NULL_HANDLE;XrSystemId system=XR_NULL_SYSTEM_ID;
+        const uint32_t status=native_xr::query_eye_size(api,*r,*out,retain?&instance:nullptr,retain?&system:nullptr);
+        if(instance){
+            preopened.loader.swap(path);preopened.api=api;
+            preopened.instance=instance;preopened.system=system;
+        }else api.Unload();
+        return int(status);
     }catch(...){out->status=GX_EYE_EXCEPTION;return GX_EYE_EXCEPTION;}
 }
 

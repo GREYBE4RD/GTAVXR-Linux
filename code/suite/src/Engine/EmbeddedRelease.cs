@@ -36,12 +36,20 @@ namespace GtavxrSuite {
         const string Resource = "GtavxrSuite.Distribution.Bundle";
         const int MiB = 1024 * 1024;
         const string Exe = "GTAVXR_SourceBaseline.exe";
-        const string ReleaseName = "embedded-gtavxr-1-0-0";
+        const string ReleaseName = "embedded-gtavxr-1-0-2";
         const string BaseHash = "677E4E355CFBDB13273B1D992407E3C261B3A108DC4DD5C8A0C4C1DA651802E5";
-        const string TargetHash = "814A9DC6BE3CF49C888B5C76D77842149532691607D9F2DC54F5795B4D623CCE";
+        const string TargetHash = "E721EBFFD4A216E969EB8AB2E33C9BF5A6C8E44CD50168400FEC52D109BA4218";
         const string CodecHash = "8F07E1112ED283E5CD2798833E9A3C32D8961381BC36DA04AF57A1B0CA9BD40B";
         const string Table = "scripthost/ScriptHookVDotNet.gtavxr-memory.txt";
-        internal const string VersionId = "gtavxr-1-0-0";
+        internal const string VersionId = "gtavxr-1-0-2";
+        internal const string PreviousVersionId = "gtavxr-1-0-0";
+
+        internal static bool HasSessionFixes(string versionId){
+            return versionId==VersionId||versionId=="gtavxr-1-0-1";
+        }
+        internal static bool UsesStoryData(string versionId){
+            return HasSessionFixes(versionId)||versionId==PreviousVersionId;
+        }
 
         static readonly HashSet<string> Runtime = new HashSet<string>(StringComparer.Ordinal) {
             "GTAVXRHost.dll", "gtavxr_native_openxr.dll", "gtavxr_trainer.dll", "openxr_loader.dll",
@@ -302,9 +310,14 @@ namespace GtavxrSuite {
         }
 
         static void WriteNew(string path, byte[] bytes) {
-            using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
-                output.Write(bytes, 0, bytes.Length);
-                output.Flush(true);
+            try {
+                using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+                    output.Write(bytes, 0, bytes.Length);
+                    output.Flush(true);
+                }
+            } catch (IOException error) {
+                if (!DiskSpaceException.IsDiskFull(error)) throw;
+                throw SafeFs.DiskWriteFailure(path,error);
             }
         }
     }

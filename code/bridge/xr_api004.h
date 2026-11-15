@@ -34,6 +34,18 @@ struct OpenXrApi {
     PFN_xrLocateViews LocateViews = nullptr;
     PFN_xrResultToString ResultToString = nullptr;
 
+    XrResult CreateCompatibleInstance(XrInstanceCreateInfo& info, XrInstance& instance) {
+        XrResult result = CreateInstance(&info, &instance);
+        // The bridge uses OpenXR 1.0 entry points and the D3D11 extension.
+        if (result == XR_ERROR_API_VERSION_UNSUPPORTED &&
+            info.applicationInfo.apiVersion > XR_API_VERSION_1_0) {
+            info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
+            instance = XR_NULL_HANDLE;
+            result = CreateInstance(&info, &instance);
+        }
+        return result;
+    }
+
     template <typename T>
     bool LoadGlobal(const char* name, T& target) {
         PFN_xrVoidFunction raw = nullptr;

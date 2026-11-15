@@ -6,6 +6,137 @@ using System.Threading;
 
 namespace GtavxrSuite {
     public static class EmbeddedInstallTests {
+        public static object CheckImportedSave(string fixtureRoot) {
+            var env=Env.ForFixture(fixtureRoot);
+            var library=new Library(env);
+            string original=SafeFs.Under(env.UserDataDir,"Profiles/ABCD/SGTA50000");
+            if(library.Profiles().Count==0){
+                Directory.CreateDirectory(Path.GetDirectoryName(original));
+                File.WriteAllBytes(original,EngineTests.FakeSave("Franklin and Lamar (2.0%)",8192));
+                new PlaySession(env).InstallEmbedded(null,null,CancellationToken.None);
+            }
+            var profile=library.Profiles().Single();
+            string staged=SafeFs.Under(env.UserDataDir,"Default/SGTA50000");
+            string originalHash=SafeFs.Hash(original);
+            string unrelated=SafeFs.Under(env.UserDataDir,"videos/clip.fixture");
+            Directory.CreateDirectory(Path.GetDirectoryName(unrelated));
+            File.WriteAllText(unrelated,"unmanaged retail content");
+            string unrelatedHash=SafeFs.Hash(unrelated);
+            var importer=new Importers(env);
+            var imported=importer.CreateProfile("Storage fixture",profile.version,true,null);
+            Check(!imported.user.Any(f=>f.relative=="videos/clip.fixture")&&
+                  !File.Exists(SafeFs.Under(library.UserDir(imported.id),"videos/clip.fixture")),
+                  "profile import excludes unrelated content");
+            string runtime=SafeFs.Under(fixtureRoot,"openxr/fixture.dll");
+            NeuralSuiteTests.FakeDll(runtime,"Fixture","OpenXR fixture","1.0.0.0",
+                new[]{"xrNegotiateLoaderRuntimeInterface"});
+            Json.New(env.OpenXrManifest,new{runtime=new{name="Fixture OpenXR",library_path="fixture.dll"}});
+            var session=new PlaySession(env);
+            CheckStagedSave(session,profile.id,staged,originalHash,()=>{
+                var pending=session.Unfinished().Single();
+                string backup=SafeFs.Under(env.DataRoot,"sessions/"+pending.id+"/retail-user");
+                Check(SafeFs.Hash(unrelated)==unrelatedHash && !File.Exists(SafeFs.Under(backup,"videos/clip.fixture")),
+                      "Play leaves unrelated retail content in place and out of the backup");
+                Check(SafeFs.Hash(SafeFs.Under(backup,"Profiles/ABCD/SGTA50000"))==originalHash,
+                      "save backup is available before launch");
+            });
+            var closed=session.Last();
+            Check(closed.phase=="CLOSED" &&
+                  !File.Exists(SafeFs.Under(env.DataRoot,"sessions/"+closed.id+"/retail-user/Profiles/ABCD/SGTA50000")),
+                  "durably closed session retires temporary save backup");
+            Check(!File.Exists(staged) && SafeFs.Hash(original)==originalHash,"original tree restored");
+            Check(library.Profile(profile.id).user.Any(f=>f.relative=="Profiles/ABCD/SGTA50000" && f.sha256==originalHash),
+                "profile manifest and original copy survive a cancelled launch");
+
+            string profileRoot=library.UserDir(profile.id);
+            string existing=SafeFs.Under(profileRoot,"Default/SGTA50000");
+            Directory.CreateDirectory(Path.GetDirectoryName(existing));
+            File.WriteAllBytes(existing,EngineTests.FakeSave("Existing VR progress (5.0%)",8192));
+            profile.user=UserTree.Snapshot(profileRoot);
+            library.SaveProfile(profile);
+            CheckStagedSave(session,profile.id,staged,SafeFs.Hash(existing));
+            File.Delete(existing);
+
+            string other=SafeFs.Under(profileRoot,"Profiles/EF12/SGTA50000");
+            Directory.CreateDirectory(Path.GetDirectoryName(other));
+            File.WriteAllBytes(other,EngineTests.FakeSave("Other account (10.0%)",8192));
+            profile.user=UserTree.Snapshot(profileRoot);
+            library.SaveProfile(profile);
+            Expect<InvalidDataException>(()=>session.Play(profile.id,null),"STORY_SELECT_SAVE");
+            StoryStart.Select(profile,"Profiles/EF12/SGTA50000");
+            library.SaveProfile(profile);
+            CheckStagedSave(session,profile.id,staged,SafeFs.Hash(other),()=>{
+                Check(UserTree.Snapshot(env.UserDataDir,true).Count(f=>StoryStart.Slot(f.relative))==1,
+                      "only the selected slot is visible to the game");
+            });
+
+            var fresh=new Importers(env).CreateProfile("New story",profile.version,false,null);
+            CheckStagedSave(session,fresh.id,staged,null);
+            Check(!File.Exists(staged) && SafeFs.Hash(original)==originalHash,"all cases restore the original tree");
+
+            string id="scoped-recovery-fixture";
+            string pendingDir=SafeFs.Under(env.DataRoot,"sessions/"+id);
+            string recoveryBackup=SafeFs.Under(pendingDir,"retail-user");
+            var retail=UserTree.Snapshot(env.UserDataDir,true);
+            UserTree.CopyInto(env.UserDataDir,retail,recoveryBackup);
+            Json.New(SafeFs.Under(pendingDir,"session.json"),new SessionRecord{
+                schema="gtavxr-suite2-session-v1",id=id,phase="USER_STAGED",profile=profile.id,
+                version=profile.version,story_user_only=true,retail_user=retail,settings_mode="suite"
+            });
+            File.WriteAllBytes(original,EngineTests.FakeSave("Staged save (4.0%)",8192));
+            Check(new PlaySession(env).Recover()=="OK" &&
+                  SafeFs.Hash(original)==originalHash && SafeFs.Hash(unrelated)==unrelatedHash &&
+                  !File.Exists(SafeFs.Under(recoveryBackup,"Profiles/ABCD/SGTA50000")),
+                  "interrupted scoped session restores retail and releases backup");
+            return new{status="PASS_IMPORTED_SAVE_STAGED_AND_RESTORED",cases=new[]{
+                "one retail account is staged in Default","existing VR progress takes precedence",
+                "multiple retail accounts require a choice","selected account and slot is the only save exposed","new story stays empty",
+                "profile import and session backup omit unrelated files",
+                "session backup is kept during staging and retired after restoration",
+                "interrupted scoped session recovers without touching unrelated files"},gta_launched=false};
+        }
+
+        internal static object CheckSaveIncident(string root,string profileId,string wanted,string expected) {
+            root=SafeFs.Root(root);
+            if(Path.GetFileName(root)!="STORY-INCIDENT-FIXTURE")
+                throw new InvalidDataException("Expected an isolated fixture root.");
+            var env=Env.ForFixture(root);
+            var library=new Library(env);
+            var profile=library.Profile(profileId);
+            string user=library.UserDir(profile.id);
+            string original=SafeFs.Under(user,wanted);
+            var info=SaveInfo.Read(original);
+            Check(info!=null&&SafeFs.Hash(original)==expected,"exact save from the reported session");
+            StoryStart.Select(profile,wanted);
+            library.SaveProfile(profile);
+            string stub=SafeFs.Under(root,"openxr/fixture.dll");
+            NeuralSuiteTests.FakeDll(stub,"Fixture","OpenXR fixture","1.0.0.0",new[]{"xrNegotiateLoaderRuntimeInterface"});
+            Json.Atomic(env.OpenXrManifest,new{runtime=new{name="Fixture OpenXR",library_path="fixture.dll"}});
+            var session=new PlaySession(env);
+            string staged=SafeFs.Under(env.UserDataDir,"Default/"+Path.GetFileNameWithoutExtension(wanted));
+            CheckStagedSave(session,profile.id,staged,expected,()=>{
+                var pending=session.Unfinished().Single();
+                Check(pending.story_start==wanted&&pending.mods.Count==0&&
+                      UserTree.Snapshot(env.UserDataDir,true).Count(row=>StoryStart.Slot(row.relative))==1,
+                      "selected save and no mods at the launch boundary");
+            });
+            Check(!File.Exists(staged)&&SafeFs.Hash(original)==expected&&library.Profile(profile.id).story_start==wanted,
+                "source save survives staging and the regular file tree is restored");
+            return new{status="PASS_EXACT_STORY_INCIDENT",mission=info.mission,percent=info.percent,
+                selected=wanted,sha256=expected,gta_launched=false};
+        }
+
+        static void CheckStagedSave(PlaySession session,string profileId,string staged,string expectedHash,Action inspect=null) {
+            bool observed=false;
+            session.Starter=process=>{
+                observed=expectedHash==null?!File.Exists(staged):File.Exists(staged)&&SafeFs.Hash(staged)==expectedHash;
+                if(inspect!=null)inspect();
+                throw new IOException("FIXTURE_DO_NOT_START_GAME");
+            };
+            Expect<IOException>(()=>session.Play(profileId,null),"FIXTURE_DO_NOT_START_GAME");
+            Check(observed,"expected offline save at launch boundary");
+        }
+
         static void Check(bool pass, string name) {
             if (!pass) throw new InvalidDataException("FIXTURE:"+name);
         }
@@ -174,13 +305,20 @@ namespace GtavxrSuite {
             NeuralSuiteTests.FakeDll(runtimeStub,"Fixture","OpenXR fixture","1.0.0.0",new[] { "xrNegotiateLoaderRuntimeInterface" });
             Json.New(env.OpenXrManifest,new { runtime=new { name="Fixture OpenXR", library_path="fixture.dll" } });
             bool sawLaunch=false;
+            bool stagedStorySave=false;
             DateTime executableWrite=File.GetLastWriteTimeUtc(newExe);
             session.Starter=process=>{
                 sawLaunch=process.FileName==newExe && process.Arguments.Contains("-gtavxrMvga");
+                string localSave=SafeFs.Under(env.UserDataDir,"Default/SGTA50000");
+                stagedStorySave=File.Exists(localSave)&&SafeFs.Hash(localSave)==storyHash;
                 throw new IOException("FIXTURE_DO_NOT_START_GAME");
             };
             Expect<IOException>(()=>session.Play(profileId,null),"FIXTURE_DO_NOT_START_GAME");
             Check(sawLaunch && File.GetLastWriteTimeUtc(newExe)==executableWrite && SafeFs.Hash(save)==saveHash,"play uses prepared install");
+            Check(stagedStorySave && SafeFs.Hash(storySave)==storyHash &&
+                  !File.Exists(SafeFs.Under(env.UserDataDir,"Default/SGTA50000")),
+                  "imported story save is visible in Default during Play and retail saves are restored");
+            passed.Add("an imported Legacy save is staged in the offline game folder without altering retail saves");
             passed.Add("Play reaches the expected launch contract without reinstalling; fixture intercepts process creation");
             if(mvgaFixtures!=null) {
                 VerifyOptionalPlay(env,session,library,version,profileId,calibration,calibrationHash,newExe);

@@ -1,14 +1,14 @@
-# Known issues in GTAVXR 1.0
+# Known issues in GTAVXR 1.0.2
 
 GTAVXR focuses on open-world exploration. If a Story Mode sequence gives you trouble in VR, follow the steps below.
 
 ## Microsoft Defender reports
 
-Some users have reported that Microsoft Defender flagged `GTAVXR.exe`. We scanned the exact installer published with v1.0.0 using Microsoft Defender, and our scan reported no threats.
+Some users reported Microsoft Defender alerts for GTAVXR.exe. A Microsoft Defender scan of the exact v1.0.0 installer reported no threats. [v1.0.0 release notice](https://github.com/LVL-VR/GTAVXR/releases/tag/v1.0.0#microsoft-defender-reports)
 
-The installer unpacks the bundled VR components and uses your existing GTA V Legacy files to build the VR executable locally. Antivirus checks can flag legitimate installers that unpack executable files.
+The installer unpacks the bundled VR components and uses your existing GTA V Legacy files to build the VR executable locally. Antivirus tools may flag installers that unpack executables.
 
-To verify your download, compare its SHA-256 with the value listed under **Release assets**. You can also scan the installer with your preferred antivirus or [VirusTotal](https://www.virustotal.com/).
+Check your download's SHA-256 against the value in the release notes for the version you downloaded. You can also scan the installer with your preferred antivirus or [VirusTotal](https://www.virustotal.com/).
 
 ## Story Mode, camera, and cutscenes
 
@@ -34,5 +34,11 @@ If the steering wheel stops following your hands, **release the grip button and 
 
 - If **F10** also opens OFXR, assign a different key to OFXR in its tray app. **F10** switches between VR and flatscreen in GTAVXR.
 - If you enable OFXR frame generation, disable **SSW** in Virtual Desktop to avoid running two interpolation modes at once. [Set up OFXR](GRAPHICS.md#ofxr-bridge)
+
+## SteamVR
+
+- SteamVR headset and controller support depends on the active OpenXR runtime and controller profile. If GTA remains in flatscreen after you can play in Story Mode, try **F10** with the GTA window focused and keep the session log if VR still fails to start. [Headset troubleshooting](TROUBLESHOOTING.md#headset-and-controllers)
+- If a Steam Link session stays in the default SteamVR environment with the GTAVXR HUD visible while the world is visible only in GTA's desktop window, finish updating with **Install GTAVXR** or **Update GTAVXR**. If the default SteamVR environment still covers the game, keep the session log and the SteamVR client log for GTAVXR. [Headset troubleshooting](TROUBLESHOOTING.md#headset-and-controllers)
+- If your controllers do not expose both stick clicks, use the configured SteamVR menu key, **F9** by default. [VR controls](VR_CONTROLS.md)
 
 If a problem persists, include the mission or action, headset model, and runtime in your report. [What to include in a report](TROUBLESHOOTING.md#report-a-problem)

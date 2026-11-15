@@ -63,5 +63,11 @@ namespace GtavxrSuite {
             // Do not remove the process-local registration until the kernel ownership is released.
             mutex.ReleaseMutex();disposed=true;mutex.Dispose();directory.Dispose();lock(gate)local.Remove(Name);
         }
+
+        internal void ReleaseDirectoryHandle(){
+            if(disposed||Thread.CurrentThread.ManagedThreadId!=ownerThread)
+                throw new InvalidOperationException("Game scope must be used by its owning thread");
+            directory.Dispose();
+        }
     }
 }

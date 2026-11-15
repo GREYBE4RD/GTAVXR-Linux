@@ -77,7 +77,7 @@ namespace GtavxrSuite {
         }
         UIElement Tag(ModManifest m){
             var users=s.Profiles.Where(p=>p.mods.Contains(m.id)||(m.kind=="mvga-native"&&s.Version(p.version)!=null&&s.Version(p.version).mvga=="required")).Select(p=>p.name).ToList();
-            var works=s.Versions.Where(v=>m.WorksWith(v)).Select(v=>v.build).Distinct().ToList();
+            var works=s.Versions.Where(v=>(v.embedded_release||s.Dev)&&m.WorksWith(v)).Select(v=>v.VersionBadge()).Distinct().ToList();
             var g=new Grid{Width=300,Margin=new Thickness(0,0,16,16)};
             g.Children.Add(new TagShape{Fill=Theme.B(Theme.Ticket)});
             g.Children.Add(new Ellipse{Width=12,Height=12,Fill=Theme.B(Theme.Terminal),Stroke=Theme.B(Theme.PaperLine),StrokeThickness=3,HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(10,0,0,0),VerticalAlignment=VerticalAlignment.Center});
@@ -146,7 +146,21 @@ namespace GtavxrSuite {
             rows.Children.Add(Row(L.S("set.lang"),lang,null));
             var game=U.Text(s.Env.GameDir??L.S("fr.game.no"),14,Theme.Text);game.FontFamily=Theme.Mono;game.TextWrapping=TextWrapping.NoWrap;game.TextTrimming=TextTrimming.CharacterEllipsis;game.Margin=new Thickness(0,0,12,0);game.ToolTip=s.Env.GameDir;
             rows.Children.Add(Row(L.S("set.game"),game,U.Btn(L.S("set.change"),"Btn",ChooseGame)));
+            if(!s.Demo){
+                var storage=U.Text(s.Env.DataRoot,14,Theme.Mist);storage.TextWrapping=TextWrapping.Wrap;
+                var change=U.Btn(L.S("set.change"),"Btn",()=>shell.ChooseDataLocation());
+                change.IsEnabled=!s.Busy&&!s.Recovery&&s.Env.ManagedLocation;
+                rows.Children.Add(Row(L.S("set.data"),storage,U.Row(8,change,
+                    U.Btn(L.S("set.data.open"),"Ghost",()=>OpenFolder(s.Env.DataRoot)))));
+            }
             rows.Children.Add(Row(L.S("set.headset"),RuntimeText(),s.Demo?null:U.Btn(L.S("set.change"),"Btn",ChooseRuntime)));
+            if(!s.Demo){
+                string selected=s.Settings.steamvr_menu_key??"F9";
+                var choices=new[]{"F7","F9","F11","off"};
+                var selector=U.Row(6,choices.Select(value=>U.Btn(value=="off"?L.S("set.steam.menu.off"):value,
+                    selected==value?"Primary":"Btn",()=>{if(!s.Busy){s.Settings.steamvr_menu_key=value;s.Save();s.Reload();}})).ToArray());
+                rows.Children.Add(Row(L.S("set.steam.menu"),selector,null));
+            }
             {
                 rows.Children.Add(Row(L.S("set.dlss"),DlssText(),U.Row(8,U.Btn(L.S("set.choose.folder"),"Btn",ChooseDlss),
                     String.IsNullOrEmpty(s.Settings.dlss_dir)?U.Btn(L.S("set.dlss.open"),"Ghost",()=>OpenFolder(s.Env.Dir("dlss"))):U.Btn(L.S("set.auto"),"Ghost",()=>{s.Settings.dlss_dir=null;s.Save();s.Reload();}))));
@@ -155,9 +169,11 @@ namespace GtavxrSuite {
                 rows.Children.Add(Row(L.S("set.ofxr"),ofText,of.layer?U.Btn(L.S("set.choose.file"),"Btn",ChooseTray):null));
             }
             var inst=s.Installed;var iv=inst==null?null:s.Version(inst.version);
-            string installed=inst==null?L.S("set.installed.none"):L.F("set.installed.v",iv==null?inst.version:iv.build+" "+iv.Title(L.Lang))+" · "+Math.Round(inst.files.Sum(f=>f.bytes)/1048576.0)+" MB";
+            string installed=inst==null?L.S("set.installed.none"):L.F("set.installed.v",iv==null?inst.version:iv.DisplayTitle(L.Lang))+" · "+Math.Round(inst.files.Sum(f=>f.bytes)/1048576.0)+" MB";
             var instActions=inst==null?null:U.Row(8,U.Btn(L.S("set.repair"),"Btn",Repair),U.Btn(L.S("set.uninstall"),"Danger",Uninstall));
             rows.Children.Add(Row(L.S("set.installed"),U.Text(installed,15,Theme.Text),instActions));
+            if(!s.Demo)rows.Children.Add(Row(L.S("set.remove.all"),U.Text(L.S("set.remove.hint"),15,Theme.Mist),
+                U.Btn(L.S("set.remove.all"),"Danger",shell.RemoveCompletely)));
             var dev=new CheckBox{Style=(Style)Application.Current.Resources["Switch"],IsChecked=s.Dev};
             dev.Click+=(o,e)=>{s.Settings.dev_mode=dev.IsChecked==true;s.Save();s.Reload();};
             rows.Children.Add(Row(L.S("set.dev"),U.Text(L.S("set.dev.hint"),15,Theme.Mist),dev));
@@ -165,9 +181,11 @@ namespace GtavxrSuite {
                 bool appInst=SelfInstall.RunningInstalled();
                 rows.Children.Add(Row(L.S("set.app"),U.Text(appInst?L.S("set.app.installed"):L.S("set.app.install.hint"),15,appInst?Theme.Mist:Theme.Text),
                     appInst?null:U.Btn(L.S("set.app.install"),"Btn",()=>shell.RunTask(L.S("set.app.install"),()=>{SelfInstall.Install();return L.S("set.app.done");}))));
-                SelfInstall.ChannelBuild up=null;try{up=SelfInstall.Available(s.Env);}catch(Exception){}
-                rows.Children.Add(Row(L.S("set.update"),U.Text(up==null?L.S("set.update.none"):L.F("set.update.avail",up.version),15,up==null?Theme.Mist:Theme.Text),
-                    up==null?null:U.Btn(L.S("set.update.go"),"Primary",()=>{SelfInstall.ApplyUpdate(s.Env,up,true);if(shell.Window!=null)shell.Window.Close();})));
+                rows.Children.Add(Row(L.S("set.update"),U.Text("GitHub Releases",15,Theme.Mist),
+                    U.Btn(L.S("set.update.check"),"Btn",shell.CheckPublicUpdate)));
+                rows.Children.Add(Row(L.S("set.update.legacy"),U.Text(L.S("set.update.portable.hint"),15,Theme.Mist),
+                    U.Row(8,U.Btn(L.S("set.update.legacy.replace"),"Btn",shell.ReplaceOldPortable),
+                        U.Btn(L.S("set.update.legacy.remove"),"Danger",shell.RemoveOldPortable))));
             }            rows.Children.Add(Row(L.S("set.about"),U.Text("GTAVXR Suite "+SuiteApp.Version,15,Theme.Mist),null));
             var box=new Border{Child=rows,BorderBrush=Theme.RimBrush(),BorderThickness=new Thickness(1.5),CornerRadius=new CornerRadius(14),Margin=new Thickness(0,16,0,0),Background=Theme.PanelBrush()};
             root.Children.Add(box);
@@ -188,7 +206,7 @@ namespace GtavxrSuite {
                 string name=r;
                 var row=new DockPanel{LastChildFill=false,Margin=new Thickness(0,0,0,8)};
                 var t=U.Text(name,14,Theme.Text);t.FontFamily=Theme.Mono;t.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(t);
-                var b=U.Btn(L.S("dev.add"),"Primary",()=>shell.RunTask(L.S("dev.add")+" "+name,()=>{var v=s.Imp.ImportRelease(name,null);return L.F("dev.added",v.build+" "+v.Title(L.Lang));}));
+                var b=U.Btn(L.S("dev.add"),"Primary",()=>shell.RunTask(L.S("dev.add")+" "+name,()=>{var v=s.Imp.ImportRelease(name,null);return L.F("dev.added",v.DisplayTitle(L.Lang));}));
                 DockPanel.SetDock(b,Dock.Right);row.Children.Add(b);c.Children.Add(row);
             }
             var box=new Border{Child=c,Padding=new Thickness(18),Margin=new Thickness(0,16,0,0),CornerRadius=new CornerRadius(14),BorderBrush=Theme.B(Theme.Hazard,0.45),BorderThickness=new Thickness(1.5),Background=Theme.B(Theme.C("#15130A"))};
@@ -269,14 +287,41 @@ namespace GtavxrSuite {
             using(var d=new System.Windows.Forms.FolderBrowserDialog{Description="GTA V",ShowNewFolderButton=false}){
                 if(d.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return;
                 if(!File.Exists(System.IO.Path.Combine(d.SelectedPath,"GTA5.exe"))){shell.Info(L.S("set.game"),L.S("fr.game.no"));return;}
-                if(s.Installed!=null){shell.Info(L.S("set.game"),L.S("set.uninstall.q"));return;}
-                s.Settings.game_dir=d.SelectedPath;s.Save();s.Env.GameDir=d.SelectedPath;s.Reload();
+                string target=d.SelectedPath;
+                shell.RunTask(L.S("set.game"),()=>{
+                    if(s.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                    new GameLayer(s.Env).Relocate(target);
+                    s.Settings.game_dir=target;s.Save();s.Env.GameDir=target;
+                    return L.S("ok");
+                });
             }
         }
-        void Repair(){shell.RunTask(L.S("set.repair"),()=>{if(s.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");var bad=new GameLayer(s.Env).Repair();if(bad.Count==0)return L.S("set.repair.ok");
-            return L.F("set.repair.bad",bad.Count);});}
+        void Repair(){shell.RunTask(L.S("set.repair"),()=>{
+            var layer=new GameLayer(s.Env);
+            var installed=layer.State();
+            if(installed==null)return L.S("set.repair.ok");
+            using(var library=GameScope.Acquire(s.Env.DataRoot))
+            using(var game=GameScope.Acquire(installed.game_dir)){
+                if(s.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                if(layer.Pending||s.Session.Unfinished().Count!=0)throw new InvalidOperationException("RECOVERY_REQUIRED");
+                var bad=layer.Repair();
+                return bad.Count==0?L.S("set.repair.ok"):L.F("set.repair.bad",bad.Count);
+            }
+        });}
         void Uninstall(){shell.Confirm(L.S("set.uninstall"),L.S("set.uninstall.q"),L.S("set.uninstall"),()=>shell.RunTask(L.S("set.uninstall"),()=>{
-            if(s.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");new GameLayer(s.Env).Uninstall(null);return L.S("set.uninstalled");}),true);}
+            var layer=new GameLayer(s.Env);
+            var installed=layer.State();
+            if(installed==null)return L.S("set.uninstalled");
+            using(var library=GameScope.Acquire(s.Env.DataRoot))
+            using(var game=Directory.Exists(installed.game_dir)?GameScope.Acquire(installed.game_dir):null){
+                if(s.Session.GameRunning())throw new InvalidOperationException("GAME_RUNNING");
+                if(layer.Pending||s.Session.Unfinished().Count!=0)throw new InvalidOperationException("RECOVERY_REQUIRED");
+                if(!new DriveInfo(System.IO.Path.GetPathRoot(installed.game_dir)).IsReady)
+                    throw new IOException("Reconnect the GTA drive: "+installed.game_dir);
+                layer.Uninstall(null);
+                return L.S("set.uninstalled");
+            }
+        }),true);}
     }
 
     // First start: the check-in desk. Finds the game, headset and space, then brings in versions and profiles.
@@ -288,23 +333,33 @@ namespace GtavxrSuite {
             if(game==null&&!s.Demo){var c=Detect.GameCandidates();if(c.Count>0)game=c[0];}
             string xr=s.Env.OpenXrManifest??(s.Demo?null:Detect.OpenXrRuntime());
             string repo=s.Env.DevRepo??(s.Demo?null:Detect.DevRepo());
-            // Free space on C: as information; only a nearly full disk (under 2 GiB) is flagged.
-            long free=-1;try{free=new DriveInfo("C").AvailableFreeSpace;}catch(Exception){}
-            bool space=free<0||free>2L*1024*1024*1024;
+            var volumes=new[]{s.Env.DataRoot,game}.Where(path=>!String.IsNullOrEmpty(path))
+                .Select(System.IO.Path.GetPathRoot).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            string free=String.Join("\n",volumes.Select(volume=>{
+                try{return L.F("fr.space.ok",new DriveInfo(volume).AvailableFreeSpace/1073741824.0,volume.TrimEnd('\\'));}
+                catch(IOException){return L.F("fr.space.unknown",volume.TrimEnd('\\'));}
+                catch(UnauthorizedAccessException){return L.F("fr.space.unknown",volume.TrimEnd('\\'));}
+            }));
             if(s.Demo){game=game??@"C:\Program Files (x86)\Steam\steamapps\common\Grand Theft Auto V";xr=xr??@"C:\Program Files\Virtual Desktop Streamer\OpenXR\virtualdesktop-openxr.json";}
             var left=U.Col(12,U.Label("Check-in",Theme.Sign),new StickerText(L.S("fr.title").ToUpperInvariant(),38),U.Text(L.S("fr.body"),16,Theme.Mist));
             if(Assets.Logo!=null){var logo=U.Img(Assets.Logo,300);logo.HorizontalAlignment=HorizontalAlignment.Left;logo.Margin=new Thickness(-8,0,0,10);left.Children.Insert(0,logo);}
             var steps=new StackPanel();
             steps.Children.Add(Step(1,L.S("fr.game"),game!=null?L.F("fr.game.ok",game):L.S("fr.game.no"),game!=null));
             steps.Children.Add(Step(2,L.S("fr.headset"),xr!=null?L.F("fr.headset.ok",Detect.RuntimeName(xr)):L.S("fr.headset.no"),xr!=null));
-            steps.Children.Add(Step(3,L.S("fr.space"),!space?L.S("fr.space.no"):free<0?L.S("fr.space.unknown"):L.F("fr.space.ok",free/(1024*1024*1024)),space));
+            steps.Children.Add(Step(3,L.S("fr.space"),free,null));
             steps.Children.Add(Step(4,L.S("fr.profiles"),repo!=null?L.S("fr.profiles.dev"):L.S("fr.profiles.plain"),null));
-            var go=U.Btn(L.S("fr.go"),"Primary",()=>Run(game,xr,repo));go.IsEnabled=game!=null&&(xr!=null||EmbeddedRelease.Available)&&space;go.HorizontalAlignment=HorizontalAlignment.Left;go.Margin=new Thickness(0,18,0,0);go.Padding=new Thickness(28,10,28,10);go.FontSize=18;
+            var go=U.Btn(L.S("fr.go"),"Primary",()=>Run(game,xr,repo));go.IsEnabled=game!=null&&(xr!=null||EmbeddedRelease.Available);go.HorizontalAlignment=HorizontalAlignment.Left;go.Margin=new Thickness(0,18,0,0);go.Padding=new Thickness(28,10,28,10);go.FontSize=18;
             var choose=U.Btn(L.S("fr.choose"),"Btn",()=>{
                 using(var d=new System.Windows.Forms.FolderBrowserDialog{Description="GTA V",ShowNewFolderButton=false}){
                     if(d.ShowDialog()==System.Windows.Forms.DialogResult.OK&&File.Exists(System.IO.Path.Combine(d.SelectedPath,"GTA5.exe"))){s.Env.GameDir=d.SelectedPath;shell.Refresh();}
                 }});
             left.Children.Add(game==null?U.Row(10,choose,go):(UIElement)go);
+            if(s.Env.ManagedLocation&&!s.Demo){
+                var location=U.Text(s.Env.DataRoot,13,Theme.Mist);
+                location.TextWrapping=TextWrapping.Wrap;
+                left.Children.Add(U.Col(5,U.Text(L.S("set.data"),15,Theme.Text),location,
+                    U.Btn(L.S("set.change"),"Btn",()=>shell.ChooseDataLocation(game))));
+            }
             var g=new Grid{Margin=new Thickness(48,34,48,40)};
             g.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});g.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(40)});g.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1.2,GridUnitType.Star)});
             g.Children.Add(left);var box=new Border{Child=steps,BorderBrush=Theme.RimBrush(),BorderThickness=new Thickness(1.5),CornerRadius=new CornerRadius(14),Background=Theme.PanelBrush(),VerticalAlignment=VerticalAlignment.Center};

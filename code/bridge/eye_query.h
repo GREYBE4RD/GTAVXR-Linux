@@ -1,17 +1,22 @@
 #pragma once
 // build133 bridge: one-shot per-view size query against an already loaded loader table (mockable).
-// Temporary instance only: no session, no swapchain, no device. Destroyed before returning.
+// No session, swapchain or device. SteamVR may reuse the qualified instance.
 #include "eye_size_policy.h"
+#include "xr_preopened.h"
 #include <algorithm>
 #include <string.h>
 namespace native_xr {
-inline uint32_t query_eye_size(OpenXrApi&api,const GxEyeSizeRequest&request,GxEyeSizeResult&out){
+inline uint32_t query_eye_size(OpenXrApi&api,const GxEyeSizeRequest&request,GxEyeSizeResult&out,
+                               XrInstance* keep=nullptr,XrSystemId* keepSystem=nullptr){
     out.mode=request.mode;out.scale_percent=gx_eye_size::clampScale(request.scale_percent);
     XrInstance instance=XR_NULL_HANDLE;const char*extension=XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
-    strcpy_s(ci.applicationInfo.applicationName,"GTAVXR Native Size Query");strcpy_s(ci.applicationInfo.engineName,"GTAVXR");
-    ci.applicationInfo.apiVersion=XR_CURRENT_API_VERSION;ci.enabledExtensionCount=1;ci.enabledExtensionNames=&extension;
-    if(!api.CreateInstance||XR_FAILED(api.CreateInstance(&ci,&instance))||instance==XR_NULL_HANDLE)return out.status=GX_EYE_RUNTIME;
+    const bool steam=keep&&keepSystem;
+    strcpy_s(ci.applicationInfo.applicationName,steam?"GTAVXR Native":"GTAVXR Native Size Query");
+    strcpy_s(ci.applicationInfo.engineName,"GTAVXR");
+    ci.applicationInfo.apiVersion=steam?XR_API_VERSION_1_0:XR_CURRENT_API_VERSION;
+    ci.enabledExtensionCount=1;ci.enabledExtensionNames=&extension;
+    if(!api.CreateInstance||XR_FAILED(api.CreateCompatibleInstance(ci,instance))||instance==XR_NULL_HANDLE)return out.status=GX_EYE_RUNTIME;
     uint32_t status=GX_EYE_RUNTIME;
     if(api.LoadForInstance(instance)){
         XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
@@ -28,9 +33,12 @@ inline uint32_t query_eye_size(OpenXrApi&api,const GxEyeSizeRequest&request,GxEy
             out.max_height=(std::min)(views[0].maxImageRectHeight,views[1].maxImageRectHeight);
             status=gx_eye_size::choose(request.mode,out.recommended_width,out.recommended_height,out.max_width,out.max_height,
                 request.scale_percent,request.manual_width,request.manual_height,out.width,out.height,out.clamped)?GX_EYE_OK:GX_EYE_POLICY;
+            if(steam&&steamvr_runtime(out.runtime)){
+                *keep=instance;*keepSystem=system;instance=XR_NULL_HANDLE;
+            }
         }else status=GX_EYE_VIEWS;
     }
-    if(api.DestroyInstance)api.DestroyInstance(instance);
+    if(instance&&api.DestroyInstance)api.DestroyInstance(instance);
     return out.status=status;
 }
 }

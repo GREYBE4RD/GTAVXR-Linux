@@ -24,15 +24,20 @@ namespace GtavxrSuite {
         public string InstallEmbedded(string profileId,Action<PlayProgress> progress,CancellationToken cancel,PlayOptions options) {
             if (GameRunning()) throw new InvalidOperationException("GAME_RUNNING");
             if (layer.Pending || Unfinished().Count != 0) throw new InvalidOperationException("RECOVERY_REQUIRED");
+            using (var library = GameScope.Acquire(env.DataRoot))
+            using (var game = GameScope.Acquire(env.GameDir))
             using (var guard = new FileStream(SafeFs.Under(env.DataRoot,"embedded-install.lock"),
                                               FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
             using (var lease = env.DevHost?PlayLease.Acquire(env.DevRepo,Ids.New(),"GTAVXR Suite: Install"):null) {
+                if(GameRunning()||layer.Pending||Unfinished().Count!=0)throw new InvalidOperationException("RECOVERY_REQUIRED");
                 return InstallSelected(profileId,progress,cancel,options);
             }
         }
 
         string InstallSelected(string profileId, Action<PlayProgress> progress, CancellationToken cancel,PlayOptions options) {
             cancel.ThrowIfCancellationRequested();
+            var migration=new ReleaseMigration(env);
+            migration.CheckDowngrade(EmbeddedRelease.VersionId);
             var imports = new Importers(env);
             var version = lib.Version(EmbeddedRelease.VersionId);
             string bundleIdentity=EmbeddedRelease.DescriptorIdentity(cancel);
@@ -47,7 +52,9 @@ namespace GtavxrSuite {
                     });
                 } finally { if (Directory.Exists(stage)) Directory.Delete(stage,true); }
             } else EmbeddedRelease.VerifyRetailInputs(env.GameDir,cancel);
-            var previous = profileId==null?null:lib.Profile(profileId);
+            migration.CheckLibraries(version,profileId);
+            string migrateProfile=migration.SelectProfile(version,profileId);
+            var previous = lib.Profile(migrateProfile??profileId);
             bool newProfile = previous==null || previous.version!=version.id;
             var profile = newProfile ? new Profile { version=version.id, mods=previous==null?new List<string>():previous.mods,
                                                      options=previous==null?null:previous.options } : previous;
@@ -70,9 +77,10 @@ namespace GtavxrSuite {
             if (verified.verified.Single(row=>row.path=="GTA5.exe").sha256!=EmbeddedRelease.RetailIdentity)
                 throw new InvalidDataException("DELTA_BASE_MISMATCH");
             if (GameRunning()) throw new InvalidOperationException("GAME_RUNNING");
+            migration.Prepare(version,previous==null?null:previous.id);
             layer.Apply(version,deploymentMods,
                         (what,done,total)=>Step(progress,"game",done,total),false);
-            if (newProfile) {
+            if (newProfile && migrateProfile==null) {
                 if (previous==null) profile=imports.CreateProfile(L.Lang=="en"?"VR Story":"Historia VR",version.id,true,null);
                 else profile=imports.CopyForEmbeddedRelease(previous,version.id);
             }
@@ -80,7 +88,9 @@ namespace GtavxrSuite {
             Json.Atomic(InstalledPath(env,version.id),new InstalledEmbeddedRelease {
                 bundle_sha256=version.source_sha256, game=SafeFs.Root(env.GameDir), retail_stamp=RetailStamp()
             });
-            return profile.id;
+            if(!env.Fixture)SelfInstall.RefreshInstalledLauncher();
+            migration.Finish(version);
+            return migrateProfile??profile.id;
         }
 
         static string InstalledPath(Env env,string versionId) {

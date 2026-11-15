@@ -4,8 +4,8 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Versioning;
 
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.0")]
 [assembly: AssemblyProduct("GTAVXR by LVL")]
 [assembly: TargetFramework(".NETFramework,Version=v4.6.2")]
 
@@ -28,7 +28,10 @@ namespace GtavxrSuite {
         }
         // Headless commands never open a window, never start GTA and never touch the real game folder.
         private static int Headless(string[] a) {
+            if(a[0]=="--imported-save-control"&&a.Length==3){Json.New(a[2],EmbeddedInstallTests.CheckImportedSave(a[1]));return 0;}
+            if(a[0]=="--story-incident-control"&&a.Length==6){Json.New(a[5],EmbeddedInstallTests.CheckSaveIncident(a[1],a[2],a[3],a[4]));return 0;}
             if(a[0]=="--self-test"&&a.Length==3){var r=EngineTests.Run(a[1]);Json.New(a[2],r);return r.failed==0?0:1;}
+            if(a[0]=="--release-migration-fixture"&&a.Length==3){Json.New(a[2],ReleaseLifecycleTests.FromPublic100(a[1]));return 0;}
             if(a[0]=="--verify-embedded-release"&&a.Length==4){Json.New(a[3],EmbeddedRelease.Reconstruct(a[1],a[2],System.Threading.CancellationToken.None));return 0;}
             if(a[0]=="--embedded-install-fixture"&&a.Length==4){Json.New(a[3],EmbeddedInstallTests.Run(a[1],a[2]));return 0;}
             if(a[0]=="--shader-delta-install-fixture"&&a.Length==4){Json.New(a[3],EmbeddedInstallTests.Run(a[1],a[2],true));return 0;}
@@ -42,6 +45,8 @@ namespace GtavxrSuite {
             if(a[0]=="--render-all"&&a.Length==3){Json.New(a[2],Preview.RenderAll(a[1]));return 0;}
             if(a[0]=="--dry-run"&&a.Length==3){Json.New(a[2],DryRun.Run(a[1],null));return 0;}
             if(a[0]=="--finish-update"&&a.Length==4)return SelfInstall.FinishUpdate(a[1],Int32.Parse(a[2]),a[3]=="restart");
+            if(a[0]=="--complete-launcher-removal"&&a.Length==4)
+                return CompleteRemoval.FinishLauncherRemoval(a[1],Int32.Parse(a[2]),Int64.Parse(a[3]));
             if(a[0]=="--publish-channel"&&a.Length==6){Json.New(a[5],SelfInstall.Publish(a[1],a[2],a[3],a[4]));return 0;}
             if(a[0]=="--smoke-window"&&a.Length==2){Json.New(a[1],SuiteApp.Smoke());return 0;}
             if(a[0]=="--self-install-test"&&a.Length==3){Json.New(a[2],SelfInstallTests.Run(a[1]));return 0;}
@@ -76,7 +81,7 @@ namespace GtavxrSuite {
         private static object ImportMods(System.Collections.Generic.List<string> paths) {
             int me=System.Diagnostics.Process.GetCurrentProcess().Id;
             foreach(var p in System.Diagnostics.Process.GetProcessesByName("GTAVXR"))using(p)if(p.Id!=me)throw new InvalidOperationException("SUITE_RUNNING");
-            var env=Env.Product(Env.DefaultDataRoot());
+            var env=Env.Product(new DataLocation(Env.DefaultDataRoot()).Resolve());
             if(new PlaySession(env).GameRunning())throw new InvalidOperationException("GAME_RUNNING");
             var imp=new Importers(env);var lib=new Library(env);
             var cards=new System.Collections.Generic.List<string>();

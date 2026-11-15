@@ -9,12 +9,28 @@ using System.Runtime.InteropServices;
 using System.ComponentModel;
 
 namespace GtavxrSuite {
+    public sealed class DiskSpaceException : IOException {
+        public readonly string Volume;
+        public readonly long AvailableBytes;
+        public readonly long? RequiredBytes;
+        public DiskSpaceException(string volume,long available,long? required,Exception inner=null)
+            : base("NO_SPACE:"+volume+" available="+available+" required="+(required.HasValue?required.Value.ToString():"unknown"),inner){
+            Volume=volume;AvailableBytes=available;RequiredBytes=required;
+        }
+        internal static bool IsDiskFull(IOException error){
+            return error.HResult==unchecked((int)0x80070070)||error.HResult==unchecked((int)0x80070027);
+        }
+    }
     public static class Json {
         public static string Encode(object o) { return new JavaScriptSerializer { MaxJsonLength=16*1024*1024, RecursionLimit=64 }.Serialize(o); }
         public static T Read<T>(string p) {
             SafeFs.NoLinks(p);
             if (new FileInfo(p).Length>16*1024*1024) throw new InvalidDataException("JSON exceeds limit");
-            string text=File.ReadAllText(p,new UTF8Encoding(false,true));StrictJson.Validate(text);
+            string text;
+            using(var file=new FileStream(p,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete))
+            using(var reader=new StreamReader(file,new UTF8Encoding(false,true)))
+                text=reader.ReadToEnd();
+            StrictJson.Validate(text);
             return new JavaScriptSerializer { MaxJsonLength=16*1024*1024, RecursionLimit=64 }.Deserialize<T>(text);
         }
         public static void New(string p, object o) {
@@ -24,8 +40,25 @@ namespace GtavxrSuite {
         }
         public static void Atomic(string p, object o) {
             SafeFs.NoLinks(p); string t=p+"."+Guid.NewGuid().ToString("N")+".tmp";
-            New(t,o);
-            if(File.Exists(p)) File.Replace(t,p,null); else File.Move(t,p);
+            try{
+                New(t,o);
+                for(int attempt=0;;attempt++){
+                    try{
+                        if(File.Exists(p)) File.Replace(t,p,null); else File.Move(t,p);
+                        break;
+                    }catch(IOException error){
+                        int code=error.HResult&0xffff;
+                        if(attempt==5||(code!=32&&code!=33&&code!=1175)||!File.Exists(t)||!File.Exists(p))throw;
+                        System.Threading.Thread.Sleep(20*(attempt+1));
+                    }
+                }
+            }finally{
+                if(File.Exists(t)){
+                    try{SafeFs.DeleteName(t);}
+                    catch(IOException error){System.Diagnostics.Trace.TraceWarning(error.Message);}
+                    catch(UnauthorizedAccessException error){System.Diagnostics.Trace.TraceWarning(error.Message);}
+                }
+            }
         }
         // Cross-process completion: visibility means the writer has flushed AND closed it.
         // Unlike Atomic, a prior receipt is never overwritten, including a racing publisher.
@@ -94,23 +127,49 @@ namespace GtavxrSuite {
         }
         public static void CopyNew(string source,string dest,string hash,long bytes) {
             AssertFile(source,hash,bytes); NoLinks(dest); Directory.CreateDirectory(Path.GetDirectoryName(dest));
-            using(var s=File.OpenRead(source)) using(var d=new FileStream(dest,FileMode.CreateNew,FileAccess.Write,FileShare.None)){s.CopyTo(d);d.Flush(true);}
+            bool created=false;
+            try{
+                using(var s=File.OpenRead(source)) using(var d=new FileStream(dest,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+                    created=true;s.CopyTo(d);d.Flush(true);
+                }
+            }catch(IOException error){
+                if(!DiskSpaceException.IsDiskFull(error))throw;
+                if(created)try{File.Delete(dest);}catch(IOException){}catch(UnauthorizedAccessException){}
+                throw DiskWriteFailure(dest,error);
+            }
             AssertFile(dest,hash,bytes);
         }
         public static void ReplaceFrom(string source,string dest,string hash,long bytes,long ticks) {
             NoLinks(dest); Directory.CreateDirectory(Path.GetDirectoryName(dest));
             string tmp=Path.Combine(Path.GetDirectoryName(dest),".suite-"+Guid.NewGuid().ToString("N")+".tmp");
-            CopyNew(source,tmp,hash,bytes);
-            if(ticks>0) File.SetLastWriteTimeUtc(tmp,new DateTime(ticks,DateTimeKind.Utc));
-            if(File.Exists(dest)) File.Replace(tmp,dest,null); else File.Move(tmp,dest);
+            try{
+                CopyNew(source,tmp,hash,bytes);
+                if(ticks>0) File.SetLastWriteTimeUtc(tmp,new DateTime(ticks,DateTimeKind.Utc));
+                if(File.Exists(dest)) File.Replace(tmp,dest,null); else File.Move(tmp,dest);
+            }finally{
+                if(File.Exists(tmp)){
+                    try{DeleteName(tmp);}
+                    catch(IOException error){System.Diagnostics.Trace.TraceWarning(error.Message);}
+                    catch(UnauthorizedAccessException error){System.Diagnostics.Trace.TraceWarning(error.Message);}
+                }
+            }
             AssertFile(dest,hash,bytes);
         }
         // The operation must fit on the disk, leaving 1 GiB so Windows never runs completely out. (The project's 90 GiB
         // floor is a rule for AI agents only, never for the Suite.)
         public const long Reserve=1L<<30;
         public static void Budget(string root,long needed) {
+            if(needed<0)throw new ArgumentOutOfRangeException("needed");
             var drive=new DriveInfo(Path.GetPathRoot(Root(root)));
-            if(needed<0 || needed>drive.AvailableFreeSpace-Reserve) throw new IOException("NO_SPACE");
+            long free=drive.AvailableFreeSpace;
+            long required=checked(needed+Reserve);
+            if(free<required)throw new DiskSpaceException(drive.Name,free,required);
+        }
+        internal static DiskSpaceException DiskWriteFailure(string path,IOException error){
+            string volume=Path.GetPathRoot(Path.GetFullPath(path));
+            long available=-1;
+            try{available=new DriveInfo(volume).AvailableFreeSpace;}catch(IOException){}catch(UnauthorizedAccessException){}
+            return new DiskSpaceException(volume,available,null,error);
         }
     }
     public class Payload { public string path {get;set;} public string sha256 {get;set;} public long bytes {get;set;} public string before {get;set;} }

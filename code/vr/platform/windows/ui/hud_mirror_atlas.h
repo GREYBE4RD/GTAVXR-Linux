@@ -116,8 +116,7 @@ struct Atlas
                 p.items[i].width != p.source[i].width || p.items[i].height != p.source[i].height ||
                 p.items[i].id != p.source[i].id || p.items[i].priority != p.source[i].priority ||
                 p.items[i].route != p.source[i].route ||
-                !(gx_native_ui::gameplayCrop(p.source[i], s.cd.Width, s.cd.Height) ||
-                  gx_native_ui::wantedCrop(p.source[i], s.cd.Width, s.cd.Height)))
+                !gx_hud_after::admitted(p.source[i], s.cd.Width, s.cd.Height))
                 return false;
         }
         for (unsigned i = 0; i < p.count; ++i)

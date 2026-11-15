@@ -7,28 +7,33 @@
 // VEHICLE = a pose in LOCAL space the EXE computes every frame (the player's seat frame in the vehicle).
 // build167 item 3 (bridge source-v16, ABI version 2): + BUTTONS, the wrist buttons card (DEFAULT = beside the left-wrist map).
 #include "bridge.h"
-#include "wrist_calibration.h"
+#include "ui_element_calibration.h"
 #include <math.h>
 #include <string.h>
 #pragma pack(push,8)
 struct GxPanelPlace {uint32_t anchor,face;GxPose offset;float scale,reserved;};
-struct GxPanelPlacements {uint32_t size,version,vehicleValid,reserved;GxPose vehicle;GxPanelPlace panel[11];};
+struct GxPanelPlacements {uint32_t size,version,vehicleValid,previewSubtitle;GxPose vehicle;GxPanelPlace panel[12];};
 #pragma pack(pop)
 static_assert(sizeof(GxPanelPlace)==72,"panel place POD ABI");
-static_assert(sizeof(GxPanelPlacements)==864,"panel placements POD ABI");
+static_assert(sizeof(GxPanelPlacements)==936,"panel placements v3 ABI");
+struct GxPanelPlacements2 {uint32_t size,version,vehicleValid,reserved;GxPose vehicle;GxPanelPlace panel[11];};
+static_assert(sizeof(GxPanelPlacements2)==864,"panel placements v2 ABI");
 typedef int (GX_CALL *GxSetPanelPlacements)(void*,const GxPanelPlacements*);
 namespace gx_panel {
-enum Panel {MAP,WANTED,RIGHT,EL_MONEY,EL_NOTIFICATIONS,EL_PHONE,EL_HELP,EL_LOCATION,EL_STATUS,EL_OTHER,BUTTONS,COUNT};
+enum Panel {MAP,WANTED,RIGHT,EL_MONEY,EL_NOTIFICATIONS,EL_PHONE,EL_HELP,EL_LOCATION,EL_STATUS,EL_OTHER,BUTTONS,EL_SUBTITLES,COUNT};
 enum Anchor {DEFAULT,LEFT_HAND,RIGHT_HAND,HEAD,ROOM,VEHICLE,ANCHOR_COUNT};
 // gx_ui_element kind (Money 0, Notifications 1, Phone 2, Help 3, Subtitles 4, Location 5, Status 6, Other 7, Wanted 8) -> panel;
-// subtitles stay the front panel of today (COUNT = not movable)
 inline unsigned elementPanel(unsigned kind){
-    static const unsigned map[9]={EL_MONEY,EL_NOTIFICATIONS,EL_PHONE,EL_HELP,COUNT,EL_LOCATION,EL_STATUS,EL_OTHER,WANTED};
+    static const unsigned map[9]={EL_MONEY,EL_NOTIFICATIONS,EL_PHONE,EL_HELP,EL_SUBTITLES,EL_LOCATION,EL_STATUS,EL_OTHER,WANTED};
     return kind<9?map[kind]:COUNT;
 }
 inline GxPose identity(){GxPose p={0,0,0,0,0,0,1};return p;}
+inline GxPose subtitlePose(const GxUiElementProfile& profile){
+    const GxPose neutral={0,-.36,-1.45,0,0,0,1};
+    return profile.individual?gx_ui_element::pose(neutral,profile,1.f):neutral;
+}
 inline GxPanelPlace place(){GxPanelPlace e;memset(&e,0,sizeof(e));e.anchor=DEFAULT;e.offset=identity();e.scale=1.f;return e;}
-inline GxPanelPlacements defaults(){GxPanelPlacements p;memset(&p,0,sizeof(p));p.size=sizeof(p);p.version=2;p.vehicle=identity();
+inline GxPanelPlacements defaults(){GxPanelPlacements p;memset(&p,0,sizeof(p));p.size=sizeof(p);p.version=3;p.vehicle=identity();
     for(unsigned k=0;k<COUNT;++k)p.panel[k]=place();return p;}
 inline bool finitePose(const GxPose&p,double reach){
     const double v[7]={p.x,p.y,p.z,p.qx,p.qy,p.qz,p.qw};for(unsigned i=0;i<7;++i)if(!(v[i]==v[i])||v[i]>1e6||v[i]<-1e6)return false;
@@ -36,9 +41,18 @@ inline bool finitePose(const GxPose&p,double reach){
     return fabs(n-1)<.01&&fabs(p.x)<=reach&&fabs(p.y)<=reach&&fabs(p.z)<=reach;
 }
 inline bool valid(const GxPanelPlacements&p){
-    if(p.size!=sizeof(p)||p.version!=2||p.vehicleValid>1||!finitePose(p.vehicle,1e5))return false;
+    if(p.size!=sizeof(p)||p.version!=3||p.vehicleValid>1||p.previewSubtitle>1||!finitePose(p.vehicle,1e5))return false;
     for(unsigned k=0;k<COUNT;++k){const GxPanelPlace&e=p.panel[k];
         if(e.anchor>=ANCHOR_COUNT||e.face>1||!(e.scale>=.3f&&e.scale<=3.f)||!finitePose(e.offset,5))return false;}
+    return true;
+}
+inline bool upgrade(const GxPanelPlacements2& previous,GxPanelPlacements& result){
+    if(previous.size!=sizeof(previous)||previous.version!=2||previous.reserved)return false;
+    auto candidate=defaults();
+    candidate.vehicleValid=previous.vehicleValid;candidate.vehicle=previous.vehicle;
+    for(unsigned k=0;k<11;++k)candidate.panel[k]=previous.panel[k];
+    if(!valid(candidate))return false;
+    result=candidate;
     return true;
 }
 inline gx_wrist::Quaternion quat(const GxPose&p){return gx_wrist::Quaternion(p.qx,p.qy,p.qz,p.qw);}

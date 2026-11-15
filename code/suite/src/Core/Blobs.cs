@@ -43,13 +43,20 @@ namespace GtavxrSuite {
             File.Move(tmp,dest);
         }
         // Where a GTAVXR file goes into the game: content profile files are links, everything else a checked copy.
-        public void Place(FileRef f,string dest){if(f.path.StartsWith("gtavxr_content/",StringComparison.OrdinalIgnoreCase))Link(f,dest);else Materialize(f,dest);}
+        internal static bool UsesContentLink(FileRef f){return f.path.StartsWith("gtavxr_content/",StringComparison.OrdinalIgnoreCase);}
+        public void Place(FileRef f,string dest){if(UsesContentLink(f))Link(f,dest);else Materialize(f,dest);}
         // Write a blob to a destination through a temp file + atomic move, then check it.
         public void Materialize(FileRef f,string dest){Materialize(f,dest,false);}
         private void Materialize(FileRef f,string dest,bool protect){
             SafeFs.NoLinks(dest);Directory.CreateDirectory(Path.GetDirectoryName(dest));
             string tmp=Path.Combine(Path.GetDirectoryName(dest),".gtavxr-"+Ids.New()+".tmp");
-            using(var s=File.OpenRead(PathOf(f.sha256)))using(var d=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){s.CopyTo(d);d.Flush(true);}
+            try{
+                using(var s=File.OpenRead(PathOf(f.sha256)))using(var d=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){s.CopyTo(d);d.Flush(true);}
+            }catch(IOException error){
+                if(!DiskSpaceException.IsDiskFull(error))throw;
+                try{File.Delete(tmp);}catch(IOException){}catch(UnauthorizedAccessException){}
+                throw SafeFs.DiskWriteFailure(dest,error);
+            }
             if(new FileInfo(tmp).Length!=f.bytes||!String.Equals(SafeFs.Hash(tmp),f.sha256,StringComparison.OrdinalIgnoreCase)){File.Delete(tmp);throw new InvalidDataException("Stored file is damaged: "+f.path);}
             File.SetAttributes(tmp,protect?FileAttributes.ReadOnly:FileAttributes.Normal);
             if(protect&&File.Exists(dest))SafeFs.DeleteName(dest);
