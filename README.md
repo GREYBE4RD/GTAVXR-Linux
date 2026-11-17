@@ -2,14 +2,14 @@
 
 Linux installer and launcher for [GTAVXR by LVL](https://github.com/LVL-VR/GTAVXR), using **GTA V Legacy** and **Proton** with **SteamVR/OpenXR**. This repository is a Linux-focused fork. The original GTAVXR 1.0.2 source, documentation, and third-party notices are retained in `code/`, `docs/`, and `THIRD_PARTY_NOTICES.md`.
 
-**Status:** experimental Linux launcher v1.3. Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
+**Status:** experimental Linux launcher v1.4. Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
 
 ## Requirements
 
 - A legitimate Steam installation of **GTA V Legacy build 1.0.3889.0**. GTA V Enhanced and other Legacy builds are not supported by this release. The launcher verifies the retail `GTA5.exe` hash before installing.
 - Steam, a working Proton installation, and SteamVR configured as the active OpenXR runtime. Connect the headset and start SteamVR before playing.
 - Python 3, the system `libzstd` library, and [rage-cli](https://github.com/VIRUXE/rage-cli/releases) (the executable is named `rage`; v0.28.1 was used for testing). Put `rage` at `~/.local/bin/rage`, or pass `--rage /path/to/rage`.
-- The extracted, official **GTAVXR 1.0.2 payload ZIP** saved as `~/Downloads/GTAVXR-payload.zip`, or provided using `--payload /path/to/GTAVXR-payload.zip`. The official Windows [GTAVXR.exe release](https://github.com/LVL-VR/GTAVXR/releases) contains the embedded release assets. **The Windows EXE is not directly accepted as the payload ZIP**, and extraction is not automated in v1.3. This is currently a manual prerequisite for a fresh installation.
+- Network access for the initial installation (unless you already have a local payload ZIP or the exact official `GTAVXR.exe`). The launcher downloads the pinned [upstream GTAVXR 1.0.2 release](https://github.com/LVL-VR/GTAVXR/releases/tag/v1.0.2) and extracts its embedded assets automatically. No Windows installer execution or manual extraction is required. The original EXE is verified against the upstream SHA-256 `b6e996bbbb64f454227b33b04c7675d634324ae95dc702c973fcadd040afc013`.
 
 The repository does **not** include GTA V game files, the proprietary GTAVXR release payload, or patched SteamVR executables.
 
@@ -17,28 +17,30 @@ On Arch Linux, install the common system dependencies with `sudo pacman -S pytho
 
 ## Run
 
-Download [gtavxr-linux-v1.3.py](gtavxr-linux-v1.3.py), open a terminal in the directory containing it, and run:
+Download [gtavxr-linux-v1.4.py](gtavxr-linux-v1.4.py), open a terminal in the directory containing it, and run:
 
 ```bash
-python3 gtavxr-linux-v1.3.py
+python3 gtavxr-linux-v1.4.py
 ```
 
 No command argument is needed. The script detects registered Steam libraries, GTA V Legacy, Proton, and SteamVR. If GTAVXR is missing, it prompts to install; once installed, it checks the installation and launches the game. On first launch, it offers to copy existing Story Mode saves into an **isolated VR Proton prefix**, preserving normal GTA saves. On later launches it preserves the VR saves and settings.
 
-The first installation reconstructs and SHA-256 verifies GTAVXR assets using the official payload and your own retail GTA files. This can take some time and needs temporary disk space.
+On first installation, if no local `~/Downloads/GTAVXR-payload.zip` exists, the script downloads the official 1.0.2 `GTAVXR.exe`, verifies its published SHA-256, locates and checks the embedded payload ZIP, and reconstructs GTAVXR using your own GTA V retail files. Temporary download and extraction files are deleted after installation or on error. The installer itself is never executed. This process can take time and needs temporary disk space.
+
+For offline installations, use `--installer /path/to/GTAVXR.exe` with an already downloaded **official 1.0.2** installer, or `--payload /path/to/GTAVXR-payload.zip` with a previously extracted ZIP. These sources are read locally. Use `--no-download` to prevent any automatic network download. When GTAVXR is already installed and verified, starting it does not download anything.
 
 For diagnostics, the existing commands remain available:
 
 ```bash
-python3 gtavxr-linux-v1.3.py status
-python3 gtavxr-linux-v1.3.py verify
-python3 gtavxr-linux-v1.3.py repair
-python3 gtavxr-linux-v1.3.py launch --dry-run
-python3 gtavxr-linux-v1.3.py import-saves
-python3 gtavxr-linux-v1.3.py uninstall
+python3 gtavxr-linux-v1.4.py status
+python3 gtavxr-linux-v1.4.py verify
+python3 gtavxr-linux-v1.4.py repair
+python3 gtavxr-linux-v1.4.py launch --dry-run
+python3 gtavxr-linux-v1.4.py import-saves
+python3 gtavxr-linux-v1.4.py uninstall
 ```
 
-Use `--game`, `--proton`, `--steam`, or `--payload` when automatic detection does not find the correct path. Use `--help` for all options.
+Use `--game`, `--proton`, `--steam`, `--installer`, or `--payload` to select explicit locations. Use `--help` for all options.
 
 ## SteamVR compositor workaround
 
@@ -51,9 +53,9 @@ On each normal launch, the script checks the SteamVR compositor binary. It autom
 Maintenance commands:
 
 ```bash
-python3 gtavxr-linux-v1.3.py steamvr-status
-python3 gtavxr-linux-v1.3.py steamvr-patch
-python3 gtavxr-linux-v1.3.py steamvr-restore
+python3 gtavxr-linux-v1.4.py steamvr-status
+python3 gtavxr-linux-v1.4.py steamvr-patch
+python3 gtavxr-linux-v1.4.py steamvr-restore
 ```
 
 The original compositor is backed up at `~/.local/share/steamvr-backups/vrcompositor-v1.0`. Close SteamVR before restoring. SteamVR updates may overwrite the fix. Do not apply the old patch to an updated binary.
@@ -77,3 +79,4 @@ GTAVXR is developed by [LVL-VR](https://github.com/LVL-VR/GTAVXR). This fork add
 - [Upstream Story Mode saves](docs/SAVES.md)
 - [Upstream third-party notices](THIRD_PARTY_NOTICES.md)
 - [Linux launcher changelog](CHANGELOG.md)
+

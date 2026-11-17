@@ -1,4 +1,13 @@
 # GTAVXR changelog
+## Linux launcher v1.4 (2026-11-17)
+
+- Automatically downloads the official GTAVXR 1.0.2 Windows release when no local payload ZIP is available.
+- Checks the pinned release asset's size and SHA-256 before inspecting or extracting its embedded release ZIP.
+- Extracts the embedded ZIP without running GTAVXR.exe or requiring an external Windows extraction utility; validates the payload identity and manifest.
+- Uses temporary storage for the downloaded EXE and payload, removing both after installation, repair, or failure.
+- Preserves local ZIP support and adds --installer for an official local EXE and --no-download for offline operation.
+- Keeps existing v1.3 installation, save management, verified SteamVR patch and launch functionality unchanged.
+
 
 ## Linux launcher v1.3 (2026-11-17)
 
