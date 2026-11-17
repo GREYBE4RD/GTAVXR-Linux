@@ -1,5 +1,13 @@
 # GTAVXR changelog
 
+## Linux launcher v1.3 (2026-11-17)
+
+- Added an experimental Linux installer and launcher for GTA V Legacy 1.0.3889.0 through Proton and SteamVR.
+- Added automatic Steam library and Proton detection, installation checks, first-install prompt, verification and repair.
+- Added version-locked, SHA-256 verified SteamVR 2.19.3 descriptor-pool patch management with backup and restore.
+- Added isolated VR Proton prefix, non-destructive Story Mode save import and supported graphics settings enforcement.
+- No additional GTA V mods are installed. The original GTAVXR 1.0.2 source and release history remain upstream-owned.
+
 ## 1.0.2
 
 - Added SteamVR support through OpenXR. Quest 3 via Steam Link verified in Story Mode. Fixed world presentation and duplicate SteamVR startup waits.
