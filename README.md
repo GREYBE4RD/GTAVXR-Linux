@@ -15,12 +15,17 @@ The repository does **not** include GTA V game files, the proprietary GTAVXR rel
 
 On Arch Linux, install the common system dependencies with `sudo pacman -S python zstd`. Install `rage` separately using the upstream Linux release. Proton, SteamVR, and the Steam client must already work on your machine.
 
+This command will download the precompiled `rage` binary, verifies its SHA-256 checksum, and makes it executable. No compilation or sudo is required. e.g.
+```bash
+mkdir -p ~/.local/bin && curl -fL https://github.com/VIRUXE/rage-cli/releases/download/v0.28.1/rage-linux-x86_64 -o ~/.local/bin/rage && echo "dd0134c89b74302d489ccd5e2e57b172425fa12ba14572016fad7e8e10e3c109  $HOME/.local/bin/rage" | sha256sum -c - && chmod +x ~/.local/bin/rage && ~/.local/bin/rage --version
+```
+
 ## Run
 
-Download [gtavxr-linux-v1.4.py](gtavxr-linux-v1.4.py), open a terminal in the directory containing it, and run:
+Download [gtavxr-linux.py](gtavxr-linux.py), open a terminal in the directory containing it, and run:
 
 ```bash
-python3 gtavxr-linux-v1.4.py
+python3 gtavxr-linux.py
 ```
 
 No command argument is needed. The script detects registered Steam libraries, GTA V Legacy, Proton, and SteamVR. If GTAVXR is missing, it prompts to install; once installed, it checks the installation and launches the game. On first launch, it offers to copy existing Story Mode saves into an **isolated VR Proton prefix**, preserving normal GTA saves. On later launches it preserves the VR saves and settings.
@@ -32,12 +37,12 @@ For offline installations, use `--installer /path/to/GTAVXR.exe` with an already
 For diagnostics, the existing commands remain available:
 
 ```bash
-python3 gtavxr-linux-v1.4.py status
-python3 gtavxr-linux-v1.4.py verify
-python3 gtavxr-linux-v1.4.py repair
-python3 gtavxr-linux-v1.4.py launch --dry-run
-python3 gtavxr-linux-v1.4.py import-saves
-python3 gtavxr-linux-v1.4.py uninstall
+python3 gtavxr-linux.py status
+python3 gtavxr-linux.py verify
+python3 gtavxr-linux.py repair
+python3 gtavxr-linux.py launch --dry-run
+python3 gtavxr-linux.py import-saves
+python3 gtavxr-linux.py uninstall
 ```
 
 Use `--game`, `--proton`, `--steam`, `--installer`, or `--payload` to select explicit locations. Use `--help` for all options.
@@ -53,9 +58,9 @@ On each normal launch, the script checks the SteamVR compositor binary. It autom
 Maintenance commands:
 
 ```bash
-python3 gtavxr-linux-v1.4.py steamvr-status
-python3 gtavxr-linux-v1.4.py steamvr-patch
-python3 gtavxr-linux-v1.4.py steamvr-restore
+python3 gtavxr-linux.py steamvr-status
+python3 gtavxr-linux.py steamvr-patch
+python3 gtavxr-linux.py steamvr-restore
 ```
 
 The original compositor is backed up at `~/.local/share/steamvr-backups/vrcompositor-v1.0`. Close SteamVR before restoring. SteamVR updates may overwrite the fix. Do not apply the old patch to an updated binary.
