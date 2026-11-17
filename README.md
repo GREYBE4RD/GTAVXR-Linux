@@ -85,3 +85,4 @@ GTAVXR is developed by [LVL-VR](https://github.com/LVL-VR/GTAVXR). This fork add
 - [Upstream third-party notices](THIRD_PARTY_NOTICES.md)
 - [Linux launcher changelog](CHANGELOG.md)
 
+It was developed with assistance from OpenAI's ChatGPT; development and testing have used Arch Linux, SteamVR and Steam Frame.
