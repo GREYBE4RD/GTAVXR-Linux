@@ -1,17 +1,17 @@
 # GTAVXR Linux
 
-Linux installer and launcher for [GTAVXR by LVL](https://github.com/LVL-VR/GTAVXR), using **GTA V Legacy** and **Proton** with **SteamVR/OpenXR**. This repository is a Linux-focused fork. The original GTAVXR 1.0.2 source, documentation, and third-party notices are retained in `code/`, `docs/`, and `THIRD_PARTY_NOTICES.md`.
+Linux installer and launcher for [GTAVXR by LVL](https://github.com/LVL-VR/GTAVXR), using **GTA V Legacy** and **Proton** with **SteamVR/OpenXR**. This repository is a Linux-focused fork. The upstream source snapshot, documentation, and third-party notices are retained in `code/`, `docs/`, and `THIRD_PARTY_NOTICES.md`.
 
-**Status:** experimental Linux launcher v1.4. Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
+**Status:** experimental Linux launcher v1.5 (GTAVXR upstream 1.0.5). Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
 
 ## Requirements
 
 - A legitimate Steam installation of **GTA V Legacy build 1.0.3889.0**. GTA V Enhanced and other Legacy builds are not supported by this release. The launcher verifies the retail `GTA5.exe` hash before installing.
 - Steam, a working Proton installation, and SteamVR configured as the active OpenXR runtime. Connect the headset and start SteamVR before playing.
 - Python 3, the system `libzstd` library, and [rage-cli](https://github.com/VIRUXE/rage-cli/releases) (the executable is named `rage`; v0.28.1 was used for testing). Put `rage` at `~/.local/bin/rage`, or pass `--rage /path/to/rage`.
-- Network access for the initial installation (unless you already have a local payload ZIP or the exact official `GTAVXR.exe`). The launcher downloads the pinned [upstream GTAVXR 1.0.2 release](https://github.com/LVL-VR/GTAVXR/releases/tag/v1.0.2) and extracts its embedded assets automatically. No Windows installer execution or manual extraction is required. The original EXE is verified against the upstream SHA-256 `b6e996bbbb64f454227b33b04c7675d634324ae95dc702c973fcadd040afc013`.
+- Network access for the initial installation (unless you already have a local payload ZIP or the exact official `GTAVXR.exe`). The launcher downloads the pinned [upstream GTAVXR 1.0.5 release](https://github.com/LVL-VR/GTAVXR/releases/tag/v1.0.5) and extracts its embedded assets automatically. No Windows installer execution or manual extraction is required. The original EXE is verified against the upstream SHA-256 `83469b72c10f2d35f9f6025c4e31c75ae7632e413165b46343749de5a31fff7c`.
 
-The repository does **not** include GTA V game files, the proprietary GTAVXR release payload, or patched SteamVR executables.
+The repository does **not** include GTA V game files, the proprietary GTAVXR release payload, or patched SteamVR executables. The retained upstream source snapshot may lag behind the GTAVXR version downloaded by the Linux launcher.
 
 On Arch Linux, install the common system dependencies with `sudo pacman -S python zstd`. Install `rage` separately using the upstream Linux release. Proton, SteamVR, and the Steam client must already work on your machine.
 
@@ -30,9 +30,9 @@ python3 gtavxr-linux.py
 
 No command argument is needed. The script detects registered Steam libraries, GTA V Legacy, Proton, and SteamVR. If GTAVXR is missing, it prompts to install; once installed, it checks the installation and launches the game. On first launch, it offers to copy existing Story Mode saves into an **isolated VR Proton prefix**, preserving normal GTA saves. On later launches it preserves the VR saves and settings.
 
-On first installation, if no local `~/Downloads/GTAVXR-payload.zip` exists, the script downloads the official 1.0.2 `GTAVXR.exe`, verifies its published SHA-256, locates and checks the embedded payload ZIP, and reconstructs GTAVXR using your own GTA V retail files. Temporary download and extraction files are deleted after installation or on error. The installer itself is never executed. This process can take time and needs temporary disk space.
+On first installation, if no local `~/Downloads/GTAVXR-payload-v1.0.5.zip` exists, the script downloads the official 1.0.5 `GTAVXR.exe`, verifies its published SHA-256, locates and checks the embedded payload ZIP, and reconstructs GTAVXR using your own GTA V retail files. Temporary download and extraction files are deleted after installation or on error. The installer itself is never executed. This process can take time and needs temporary disk space.
 
-For offline installations, use `--installer /path/to/GTAVXR.exe` with an already downloaded **official 1.0.2** installer, or `--payload /path/to/GTAVXR-payload.zip` with a previously extracted ZIP. These sources are read locally. Use `--no-download` to prevent any automatic network download. When GTAVXR is already installed and verified, starting it does not download anything.
+For offline installations, use `--installer /path/to/GTAVXR.exe` with an already downloaded **official 1.0.5** installer, or `--payload /path/to/GTAVXR-payload-v1.0.5.zip` with a previously extracted ZIP. These sources are read locally. Use `--no-download` to prevent any automatic network download. When GTAVXR is already installed and verified, starting it does not download anything.
 
 For diagnostics, the existing commands remain available:
 
@@ -40,12 +40,23 @@ For diagnostics, the existing commands remain available:
 python3 gtavxr-linux.py status
 python3 gtavxr-linux.py verify
 python3 gtavxr-linux.py repair
+python3 gtavxr-linux.py update
 python3 gtavxr-linux.py launch --dry-run
 python3 gtavxr-linux.py import-saves
 python3 gtavxr-linux.py uninstall
 ```
 
 Use `--game`, `--proton`, `--steam`, `--installer`, or `--payload` to select explicit locations. Use `--help` for all options.
+
+## Updating from GTAVXR 1.0.2
+
+The Linux v1.5 launcher recognises the verified GTAVXR 1.0.2 installation created by the earlier Linux launcher. Run `python3 gtavxr-linux.py` as usual. If the old version is detected, it offers to update to **GTAVXR 1.0.5** before launching. You can also use `python3 gtavxr-linux.py update` directly.
+
+The upgrade verifies the old installation and reconstructs the new version before replacing any files. It backs up its existing managed files, installs the new release, and verifies the result. On failure it restores the old installation. If the process is interrupted during replacement, the next normal run recovers the previous installation from the saved upgrade journal. **Do not manually delete the upgrade journal or backup directory.**
+
+The isolated VR Proton prefix, existing Story Mode saves, imported saves, and `~/.local/share/gtavxr-linux/vr-settings.ini` are preserved. No additional GTA V mods are installed. If the 1.0.2 installation has missing or modified files, repair it first with the previous Linux v1.4 launcher. The new installer will not overwrite unrecognised files.
+
+**Testing status:** Version 1.5 has passed Python syntax, synthetic embedded-bundle validation, upgrade, rollback and interruption-recovery tests. The full 1.0.5 download, reconstruction and gameplay have not yet been tested on a live GTA V installation. Back up your saves independently before performing a first live upgrade.
 
 ## SteamVR compositor workaround
 

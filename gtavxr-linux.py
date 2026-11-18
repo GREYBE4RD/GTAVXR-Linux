@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.4.
+"""GTAVXR Linux installer and VR launcher v1.5.
 
-Downloads and verifies official GTAVXR.exe 1.0.2 if no local payload exists,
+Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
 GTA V Legacy 1.0.3889.0 resources are reconstructed with rage-cli + libzstd.
 
 No command: detect the game and Proton, offer first installation, and launch.
-Missing local payload: securely fetch and unpack the official v1.0.2 EXE.
+Missing local payload: securely fetch and unpack the official v1.0.5 EXE.
+update:     safely upgrade an existing 1.0.2 Linux installation to 1.0.5.
 verify:     reconstruct/hash-check files in a disposable temporary directory.
 install:    install verified game files and runtime without replacing retail files.
 repair:     reconstruct missing installer-owned files without overwriting changes.
@@ -43,26 +44,38 @@ from urllib import error as urlerror, request as urlrequest
 from urllib.parse import urlsplit
 import zipfile
 
-RELEASE = "gtavxr-1-0-2"
+RELEASE = "gtavxr-1-0-5"
+PREVIOUS_RELEASE = "gtavxr-1-0-2"
 BASE_SHA = "677E4E355CFBDB13273B1D992407E3C261B3A108DC4DD5C8A0C4C1DA651802E5"
-TARGET_SHA = "E721EBFFD4A216E969EB8AB2E33C9BF5A6C8E44CD50168400FEC52D109BA4218"
+TARGET_SHA = "A6776E715859B9299A2951018FE639198FA7B7CCEA5322985B6A06C99ABE390D"
 DEFAULT_GAME = Path("/mnt/linflux/SteamLibrary/steamapps/common/Grand Theft Auto V")
-DEFAULT_PAYLOAD = Path.home() / "Downloads/GTAVXR-payload.zip"
+DEFAULT_PAYLOAD = Path.home() / "Downloads/GTAVXR-payload-v1.0.5.zip"
 STATE_FILE = "gtavxr-linux-state-v1.json"
 RAGE_DEFAULT = Path.home() / '.local/bin/rage'
 PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/proton')
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.4'
-# Pinned to the official LVL-VR GTAVXR 1.0.2 release asset. Do not use /latest:
+VERSION = '1.5'
+# Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
-UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.2/GTAVXR.exe'
-UPSTREAM_EXE_SHA = 'b6e996bbbb64f454227b33b04c7675d634324ae95dc702c973fcadd040afc013'
-UPSTREAM_EXE_BYTES = 25580032
-# SHA-256 of the ZIP manifest resource recovered from the 1.0.2 release.
-UPSTREAM_PAYLOAD_SHA = '2ce507dd4ff319291d625da72a661dc4836cbf323a531c8e044562b8535fb644'
-UPSTREAM_PAYLOAD_BYTES = 22471517
+UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
+UPSTREAM_EXE_SHA = '83469b72c10f2d35f9f6025c4e31c75ae7632e413165b46343749de5a31fff7c'
+UPSTREAM_EXE_BYTES = 25691648
+# The embedded ZIP is authenticated by the SHA-256 of the complete official
+# Windows EXE above. Its compressed size can change independently of the game.
+# Keep the manifest identity and upstream source file inventory pinned.
+UPSTREAM_PAYLOAD_COUNT = 1101
+UPSTREAM_RUNTIME_FILES = frozenset({
+    'GTAVXRHost.dll', 'gtavxr_native_openxr.dll', 'gtavxr_trainer.dll',
+    'openxr_loader.dll', 'nvngx.dll_gtavxr.dll', 'nvngx.dll_gtavxr_sr.dll',
+    'scripthost/ScriptHookVDotNet.asi', 'scripthost/ScriptHookVDotNet2.dll',
+    'scripthost/ScriptHookVDotNet3.dll', 'scripthost/ScriptHookVDotNet.ini',
+    'scripthost/gtavxr-host-features.txt',
+    'scripthost/ScriptHookVDotNet.gtavxr-memory.txt',
+    'scripthost/ScriptHookVDotNet-LICENSE.txt',
+    'scripthost/ScriptHookVDotNet-THIRD-PARTY-NOTICES.md',
+})
 MAX_EXE_BYTES = 64 * 1024 * 1024
 STEAMVR_ORIGINAL_SHA = 'b3747b541c86f683286f13fcce9ed7761e0258ecef3827c5ce915167226947fe'
 STEAMVR_PATCHED_SHA = 'e16e01eefa44ed709a00aaf1617538f595def0d1805d9674349c9c380dd1e813'
@@ -132,7 +145,15 @@ def read_manifest(z):
     manifest = json.loads(z.read('manifest.json'))
     check(manifest['schema'] == 'gtavxr-embedded-release-v2' and manifest['id'] == RELEASE, "Unexpected release manifest")
     check(manifest['base']['sha256'].upper() == BASE_SHA and manifest['target']['sha256'].upper() == TARGET_SHA, "Executable identity mismatch")
-    check(len(manifest['entries']) == 1121, "Unexpected manifest entry count")
+    check(len(manifest['entries']) == UPSTREAM_PAYLOAD_COUNT + len(UPSTREAM_RUNTIME_FILES) + 4,
+          "Unexpected manifest entry count")
+    from collections import Counter
+    kinds = Counter(e['kind'] for e in manifest['entries'])
+    check(kinds == {'payload': UPSTREAM_PAYLOAD_COUNT,
+                    'runtime': len(UPSTREAM_RUNTIME_FILES), 'metadata': 2,
+                    'patch': 1, 'codec': 1}, 'Unexpected payload kind inventory')
+    check({e['path'] for e in manifest['entries'] if e['kind'] == 'runtime'} ==
+          UPSTREAM_RUNTIME_FILES, 'Required GTAVXR runtime files differ from upstream')
     names = set()
     for e in manifest['entries']:
         safe_rel(e['path'])
@@ -213,15 +234,15 @@ def verify_upstream_exe(path):
     check(path.stat().st_size == UPSTREAM_EXE_BYTES,
           f'GTAVXR.exe size mismatch: expected {UPSTREAM_EXE_BYTES} bytes')
     check(file_sha_lower(path) == UPSTREAM_EXE_SHA,
-          'GTAVXR.exe SHA-256 mismatch; this is not the pinned official 1.0.2 release')
+          'GTAVXR.exe SHA-256 mismatch; this is not the pinned official 1.0.5 release')
     print('GTAVXR: Official Windows release SHA-256 verified.', flush=True)
 
 
 def download_upstream_exe(destination):
     """Download into an isolated temporary directory and verify before parsing."""
-    print('GTAVXR: Downloading official GTAVXR 1.0.2 release (24.4 MiB)...', flush=True)
+    print('GTAVXR: Downloading official GTAVXR 1.0.5 release...', flush=True)
     req = urlrequest.Request(UPSTREAM_EXE_URL,
-                             headers={'User-Agent': 'GTAVXR-Linux/1.4',
+                             headers={'User-Agent': 'GTAVXR-Linux/1.5',
                                       'Accept': 'application/octet-stream'})
     opener = urlrequest.build_opener(VerifiedHTTPSRedirect())
     written = 0
@@ -269,20 +290,20 @@ def embedded_release_zip(image):
             start = i - cd_size - cd_offset
             end = i + 22 + comment_len
             if (disk == cd_disk == 0 and disk_records == total_records and
-                    total_records == 409 and comment_len == 0 and
+                    300 <= total_records <= 800 and comment_len == 0 and
+                    10 * 1024 * 1024 <= end - start <= 40 * 1024 * 1024 and
                     0 <= start < i and end <= len(image) and
-                    end - start == UPSTREAM_PAYLOAD_BYTES and
                     image[start:start + 4] == b'PK\x03\x04' and
                     image[start + cd_offset:start + cd_offset + 4] == b'PK\x01\x02'):
                 archive = image[start:end]
-                check(hashlib.sha256(archive).hexdigest() == UPSTREAM_PAYLOAD_SHA,
-                      'The embedded release ZIP identity does not match GTAVXR 1.0.2')
+                # Byte identity is inherited from the verified official EXE;
+                # reject any embedded ZIP that lacks the pinned release manifest.
                 with zipfile.ZipFile(io.BytesIO(archive)) as z:
                     check(z.testzip() is None, 'Embedded release ZIP failed CRC verification')
                     read_manifest(z)
                 return archive
         i = image.rfind(signature, 0, i)
-    raise Failure('Could not find the GTAVXR 1.0.2 embedded release ZIP inside the verified EXE')
+    raise Failure('Could not find the GTAVXR 1.0.5 embedded release ZIP inside the verified EXE')
 
 
 @contextmanager
@@ -315,7 +336,7 @@ def acquire_payload(args):
 
 
 def stage(args):
-    """Use the local payload if available; otherwise fetch and extract 1.0.2."""
+    """Use an explicitly matching local payload, or fetch and extract 1.0.5."""
     # Repair with no missing files should not cause a network download.
     if args.command == 'repair':
         game, runtime, state = installed(args, verify=False)
@@ -340,6 +361,7 @@ def stage_verified_payload(args, payload):
     check(game.is_dir(), f"Game directory not found: {game}")
     check(not args.game.is_symlink(), "Game directory is a symlink")
     repairing = args.command == 'repair'
+    upgrading = args.command == 'update'
     current = None
     missing = set()
     if repairing:
@@ -356,8 +378,15 @@ def stage_verified_payload(args, payload):
             print('GTAVXR: All installer-owned files are already present and verified.')
             return
         print(f'GTAVXR: Reconstructing {len(missing)} missing files for safe repair.', flush=True)
+    elif upgrading:
+        _, previous_runtime, current = installed(args, verify=True, allow_older=True)
+        check(current['release'] == PREVIOUS_RELEASE,
+              'Only verified 1.0.2 installations can be upgraded to 1.0.5')
+        check(not process_running('GTAVXR_SourceBaseline.exe'),
+              'Close GTAVXR completely before upgrading')
+        print(f'GTAVXR: Upgrading {PREVIOUS_RELEASE} to {RELEASE}; saves and VR settings remain intact.', flush=True)
     else:
-        check(not (game / STATE_FILE).exists(), "Existing Linux installation state found. Use 'repair' for missing files.")
+        check(not (game / STATE_FILE).exists(), "Existing Linux installation state found. Use 'repair' or 'update'.")
     check(payload.is_file(), f"Payload not found: {payload}")
     if args.rpf_dir is not None:
         check(args.rpf_dir.is_dir(), f"Extracted resource directory not found: {args.rpf_dir}")
@@ -365,7 +394,7 @@ def stage_verified_payload(args, payload):
         check(not (rpf_location == game or game in rpf_location.parents), "Extract retail resources outside GTA's installation folder")
     else:
         rpf_location = None
-    if not repairing:
+    if not repairing and not upgrading:
         check(not any((game / x).exists() for x in ('GTAVXR_SourceBaseline.exe','gtavxr_native_openxr.dll')), "An existing GTAVXR installation is present; refusing to overwrite")
     exe = game / 'GTA5.exe'
     check(exe.is_file(), "GTA5.exe not found")
@@ -421,6 +450,9 @@ def stage_verified_payload(args, payload):
             check_bytes(target, manifest['target'], 'GTAVXR_SourceBaseline.exe')
             (output / 'GTAVXR_SourceBaseline.exe').write_bytes(target)
             files.append({'path':'GTAVXR_SourceBaseline.exe','sha256':TARGET_SHA,'bytes':len(target),'kind':'payload'})
+            if upgrading:
+                upgrade_installation(args, output, files, current)
+                return
             if repairing:
                 check([(f['path'], f['sha256'], f['bytes'], f['kind']) for f in files] ==
                       [(f['path'], f['sha256'], f['bytes'], f['kind']) for f in current['files']],
@@ -471,6 +503,168 @@ def stage_verified_payload(args, payload):
                 print(f'GTAVXR: Repaired {len(paths)} missing files; all installed files verified.')
             else:
                 print(f'GTAVXR: Installed {len(files)} verified files.')
+
+
+
+def upgrade_journal(args):
+    return args.game.resolve() / 'gtavxr-linux-upgrade-v1.json'
+
+
+def upgrade_backup(args):
+    return args.game.resolve().parent / '.gtavxr-linux-upgrade-backup'
+
+
+def owned_destination(game, runtime, info):
+    rel = safe_rel(info['path'])
+    root = runtime if info['kind'] in ('runtime', 'metadata') else game
+    return no_symlinks(root, rel)
+
+
+def atomic_copy_into(source, destination):
+    """Install a verified source using a same-directory temporary file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.gtavxr-install-', dir=destination.parent)
+    try:
+        with os.fdopen(fd, 'wb') as target, source.open('rb') as original:
+            shutil.copyfileobj(original, target)
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(name, stat.S_IMODE(source.stat().st_mode))
+        os.replace(name, destination)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def rollback_upgrade(args):
+    """Recover only verified files managed by the Linux installer."""
+    journal_path = upgrade_journal(args)
+    check(journal_path.is_file() and not journal_path.is_symlink(),
+          'No trustworthy upgrade journal found')
+    record = json.loads(journal_path.read_text())
+    check(record.get('schema') == 'gtavxr-linux-upgrade-v1' and
+          record.get('previous', {}).get('release') == PREVIOUS_RELEASE and
+          record.get('next_release') == RELEASE, 'Unrecognised upgrade journal')
+    game = args.game.resolve()
+    runtime = game.parent / '.gtavxr-linux-runtime'
+    check(record['previous'].get('runtime') == str(runtime),
+          'Upgrade journal references an unexpected runtime directory')
+    backup = upgrade_backup(args)
+    check(backup.is_dir() and not backup.is_symlink(),
+          f'Upgrade backup missing: {backup}. No files were deleted.')
+    old_files = record['previous']['files']
+    new_files = record['next_files']
+    old = {owned_destination(game, runtime, f): f for f in old_files}
+    new = {owned_destination(game, runtime, f): f for f in new_files}
+    check(len(old) == len(old_files) and len(new) == len(new_files),
+          'Duplicate upgrade file destinations')
+    # Verify every backup and target BEFORE changing installed files.
+    for dest, info in old.items():
+        section = 'runtime' if info['kind'] in ('runtime', 'metadata') else 'game'
+        saved = no_symlinks(backup, Path(section) / safe_rel(info['path']))
+        check(file_matches(saved, info), f'Upgrade backup damaged: {saved}')
+        if dest.exists():
+            check(file_matches(dest, info) or
+                  (dest in new and file_matches(dest, new[dest])),
+                  f'Unexpectedly modified file, refusing rollback: {dest}')
+    for dest, info in new.items():
+        if dest not in old and dest.exists():
+            check(file_matches(dest, info),
+                  f'Unexpectedly modified new file, refusing rollback: {dest}')
+    for dest, info in new.items():
+        if dest not in old:
+            dest.unlink(missing_ok=True)
+    for dest, info in old.items():
+        if not file_matches(dest, info):
+            section = 'runtime' if info['kind'] in ('runtime', 'metadata') else 'game'
+            saved = backup / section / safe_rel(info['path'])
+            atomic_copy_into(saved, dest)
+    state_path = game / STATE_FILE
+    pending = state_path.with_name(state_path.name + '.tmp')
+    check(not pending.is_symlink(), f'Unsafe state temporary file: {pending}')
+    if pending.exists():
+        pending.unlink()
+    atomic_json(state_path, record['previous'])
+    installed(args, verify=True, allow_older=True)
+    journal_path.unlink()
+    shutil.rmtree(backup)
+    print('GTAVXR: Previous verified 1.0.2 installation restored; VR saves and settings untouched.', flush=True)
+
+
+def recover_upgrade(args):
+    if upgrade_journal(args).exists():
+        print('GTAVXR: An interrupted update was found. Restoring the previous installation...', flush=True)
+        check(not process_running('GTAVXR_SourceBaseline.exe'),
+              'Close GTAVXR before recovering an interrupted update')
+        rollback_upgrade(args)
+    else:
+        check(not upgrade_backup(args).exists(),
+              f'Orphaned upgrade backup found: {upgrade_backup(args)}. Inspect before updating.')
+
+
+def upgrade_installation(args, staged, files, previous):
+    """Replace only owned files; preserve the old version until verification."""
+    game = args.game.resolve()
+    runtime = game.parent / '.gtavxr-linux-runtime'
+    check(previous.get('release') == PREVIOUS_RELEASE and
+          previous.get('runtime') == str(runtime), 'Unexpected previous installation')
+    check(len(files) == UPSTREAM_PAYLOAD_COUNT + len(UPSTREAM_RUNTIME_FILES) + 3,
+          'New release inventory incomplete')
+    check(not process_running('GTAVXR_SourceBaseline.exe'),
+          'Close GTAVXR before upgrading')
+    journal_path = upgrade_journal(args)
+    backup = upgrade_backup(args)
+    check(not journal_path.exists() and not backup.exists(),
+          'Previous upgrade journal/backup is present; recovery required')
+    old = {owned_destination(game, runtime, f): f for f in previous['files']}
+    new = {owned_destination(game, runtime, f): f for f in files}
+    check(len(old) == len(previous['files']) and len(new) == len(files),
+          'Duplicate upgrade paths detected')
+    for dest, info in old.items():
+        check(file_matches(dest, info),
+              f'Old GTAVXR file changed; refusing upgrade: {dest}')
+    for dest in new:
+        check(not dest.exists() or dest in old,
+              f'Unowned GTAVXR file would be overwritten: {dest}')
+    # Preserve old file inodes with hardlinks where available; fall back to copies.
+    backup.mkdir(mode=0o700)
+    try:
+        for dest, info in old.items():
+            section = 'runtime' if info['kind'] in ('runtime', 'metadata') else 'game'
+            saved = no_symlinks(backup, Path(section) / safe_rel(info['path']))
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(dest, saved)
+            except OSError:
+                shutil.copy2(dest, saved)
+            check(file_matches(saved, info), f'Backup verification failed: {saved}')
+        record = {'schema': 'gtavxr-linux-upgrade-v1', 'previous': previous,
+                  'next_release': RELEASE, 'next_files': files}
+        atomic_json(journal_path, record)
+    except BaseException:
+        if not journal_path.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        raise
+    try:
+        for info in files:
+            dest = owned_destination(game, runtime, info)
+            if file_matches(dest, info):
+                continue
+            source = staged / safe_rel(info['path'])
+            check(file_matches(source, info), f'Staged file no longer matches manifest: {source}')
+            atomic_copy_into(source, dest)
+        for dest in old.keys() - new.keys():
+            dest.unlink()
+        state = {'schema': 'gtavxr-linux-v1', 'release': RELEASE,
+                 'runtime': str(runtime), 'files': files}
+        atomic_json(game / STATE_FILE, state)
+        installed(args, verify=True)
+    except BaseException:
+        print('GTAVXR: Update failed. Attempting automatic rollback...', file=sys.stderr, flush=True)
+        rollback_upgrade(args)
+        raise
+    journal_path.unlink()
+    shutil.rmtree(backup)
+    print(f'GTAVXR: Updated to 1.0.5 ({len(files)} verified files). Existing VR saves and settings preserved.', flush=True)
 
 
 def atomic_json(path, obj):
@@ -709,17 +903,22 @@ def steamvr_maintenance(args, operation='patch'):
     return 'original'
 
 
-def installed(args, verify=False):
+def installed(args, verify=False, allow_older=False):
     game = args.game.resolve()
     state_file = game / STATE_FILE
     check(state_file.is_file() and not state_file.is_symlink(),
           "Not installed. Run 'install' first; 'verify' only tests reconstruction.")
     state = json.loads(state_file.read_text())
-    check(state.get('schema') == 'gtavxr-linux-v1' and state.get('release') == RELEASE,
-          'Unknown installer state. Refusing to continue.')
+    check(state.get('schema') == 'gtavxr-linux-v1' and
+          state.get('release') in ({RELEASE, PREVIOUS_RELEASE} if allow_older else {RELEASE}),
+          f'Unsupported or outdated installation: {state.get("release")}. Use update for 1.0.2.')
     runtime = Path(state['runtime']).resolve()
     check(runtime == game.parent / '.gtavxr-linux-runtime', 'Unexpected runtime location')
-    check(len(state['files']) == 1120, 'Unexpected installed file count')
+    expected_count = 1120 if state['release'] == PREVIOUS_RELEASE else (
+        UPSTREAM_PAYLOAD_COUNT + len(UPSTREAM_RUNTIME_FILES) + 2 + 1)
+    check(len(state['files']) == expected_count, 'Unexpected installed file count')
+    check(len({(f['kind'], f['path']) for f in state['files']}) == len(state['files']),
+          'Duplicate installed file path')
     for info in state['files']:
         rel = safe_rel(info['path'])
         root = runtime if info['kind'] in ('runtime', 'metadata') else game
@@ -947,7 +1146,11 @@ def check_launch(args, full_verify=True):
 
 
 def status(args):
-    game, runtime, state = installed(args, verify=True)
+    check(not upgrade_journal(args).exists(),
+          'An interrupted upgrade needs recovery. Run the launcher without arguments.')
+    game, runtime, state = installed(args, verify=True, allow_older=True)
+    print(f'GTAVXR release: {state["release"]}' +
+          (' (upgrade available: 1.0.5)' if state['release'] == PREVIOUS_RELEASE else ''))
     print(f'PASS: {len(state["files"])} installed files match their SHA-256 hashes.')
     print(f'Game: {game}')
     print(f'Runtime: {runtime}')
@@ -1014,7 +1217,7 @@ def launch(args):
     # Windows Khronos loader should discover Proton's wineopenxr64 through the
     # Wine registry. A Linux XR_RUNTIME_JSON would override it with an ELF runtime.
     env.pop('XR_RUNTIME_JSON', None)
-    # Known workaround for GTAVXR 1.0.2 invalid PE export directory on AMD.
+    # Known workaround for GTAVXR 1.0.5 invalid PE export directory on AMD.
     dxvk = env.get('DXVK_CONFIG', '')
     if not args.no_amd_workaround:
         check('dxgi.customVendorId' not in dxvk or '8086' in dxvk,
@@ -1076,7 +1279,7 @@ def uninstall(args):
     path = game / STATE_FILE
     check(path.is_file(), "No Linux installer state file found")
     state = json.loads(path.read_text())
-    check(state.get('schema') == 'gtavxr-linux-v1' and state.get('release') == RELEASE, 'Unknown installation state')
+    check(state.get('schema') == 'gtavxr-linux-v1' and state.get('release') in (RELEASE, PREVIOUS_RELEASE), 'Unknown installation state')
     runtime = Path(state['runtime']).resolve()
     check(runtime == game.parent / '.gtavxr-linux-runtime', 'Unexpected runtime path')
     for f in state['files']:
@@ -1104,9 +1307,16 @@ def auto(args):
     check(args.proton.is_file(), 'Proton not detected. Use --proton /path/to/proton')
     if (args.game / STATE_FILE).exists():
         try:
-            game, runtime, state = installed(args, verify=True)
+            game, runtime, state = installed(args, verify=True, allow_older=True)
         except Failure as error:
             print(f'GTAVXR: Installation needs attention: {error}')
+            # v1.5 can upgrade only a complete, verified v1.4-managed 1.0.2
+            # installation. Do not try repairing it with a 1.0.5 bundle.
+            prior_state = json.loads((args.game / STATE_FILE).read_text())
+            if prior_state.get('release') == PREVIOUS_RELEASE:
+                raise Failure('The existing 1.0.2 installation is not verified. '
+                              'Repair it with the previous Linux v1.4 launcher first; '
+                              'your VR prefix and saves have not been changed.') from error
             if not prompt_yes('Attempt to repair missing GTAVXR files?'):
                 raise Failure('GTAVXR files were not repaired; launch cancelled')
             args.command = 'repair'
@@ -1115,7 +1325,17 @@ def auto(args):
             finally:
                 args.command = 'auto'
             game, runtime, state = installed(args, verify=True)
-        print(f'GTAVXR: Installed and verified ({len(state["files"])} files).')
+        if state['release'] == PREVIOUS_RELEASE:
+            print('GTAVXR: 1.0.2 installed. Official 1.0.5 is supported by this launcher.')
+            check(prompt_yes('Update GTAVXR from 1.0.2 to 1.0.5?'),
+                  'Update declined; the existing installation was left unchanged')
+            args.command = 'update'
+            try:
+                stage(args)
+            finally:
+                args.command = 'auto'
+            game, runtime, state = installed(args, verify=True)
+        print(f'GTAVXR: {state["release"]} installed and verified ({len(state["files"])} files).')
     else:
         print('GTAVXR: Not installed.')
         check(prompt_yes('Install GTAVXR?'), 'GTAVXR installation declined')
@@ -1130,14 +1350,14 @@ def auto(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', nargs='?', default='auto',
-                    choices=['auto', 'verify', 'install', 'repair', 'status', 'launch',
+                    choices=['auto', 'verify', 'install', 'repair', 'update', 'status', 'launch',
                              'import-saves', 'steamvr-status', 'steamvr-patch',
                              'steamvr-restore', 'uninstall'])
     ap.add_argument('--game', type=Path, default=None)
     ap.add_argument('--payload', type=Path, default=None,
-                    help='Use a pre-extracted local GTAVXR 1.0.2 payload ZIP')
+                    help='Use a pre-extracted local GTAVXR 1.0.5 payload ZIP')
     ap.add_argument('--installer', type=Path, default=None,
-                    help='Use a local official GTAVXR.exe instead of downloading it')
+                    help='Use a local official GTAVXR 1.0.5 EXE instead of downloading it')
     ap.add_argument('--no-download', action='store_true',
                     help='Never download the official Windows GTAVXR release')
     ap.add_argument('--rpf-dir', type=Path,
@@ -1156,12 +1376,13 @@ def main():
         args.payload = DEFAULT_PAYLOAD
     try:
         discover_paths(args)
-        if args.command in ('auto', 'install', 'repair', 'launch', 'uninstall',
+        if args.command in ('auto', 'install', 'repair', 'update', 'launch', 'uninstall',
                             'import-saves', 'steamvr-patch', 'steamvr-restore'):
             with exclusive(args.command):
+                recover_upgrade(args)
                 if args.command == 'auto':
                     auto(args)
-                elif args.command in ('install', 'repair'):
+                elif args.command in ('install', 'repair', 'update'):
                     stage(args)
                 elif args.command == 'launch':
                     launch(args)

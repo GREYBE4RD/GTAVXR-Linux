@@ -1,4 +1,14 @@
 # GTAVXR changelog
+## Linux launcher v1.5 (2026-11-18)
+
+- Updated the pinned official GTAVXR installer to upstream 1.0.5 (new URL, size, SHA-256, executable hash and runtime-file inventory).
+- Added automatic detection and upgrade of verified Linux GTAVXR 1.0.2 installations, with a default-Yes update prompt; added an explicit `update` command.
+- Added SHA-256 verified backups and rollback for installer-managed game/runtime files. Interrupted updates are recovered on the next normal run.
+- Preserved existing VR Proton prefix, Story Mode saves and VR settings. Refuses modified, incomplete or unowned files instead of overwriting them.
+- Changed the default local ZIP name to `GTAVXR-payload-v1.0.5.zip` so the old 1.0.2 ZIP is not mistakenly reused. A verified official 1.0.5 Windows EXE is downloaded when needed.
+- Kept the SteamVR workaround version-locked and unchanged; no additional mods.
+- Syntax and simulated bundle/upgrade/rollback tests passed. Live 1.0.5 download, install and gameplay require user testing.
+
 ## Linux launcher v1.4 (2026-11-17)
 
 - Automatically downloads the official GTAVXR 1.0.2 Windows release when no local payload ZIP is available.
