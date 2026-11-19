@@ -22,6 +22,16 @@ mkdir -p ~/.local/bin && curl -fL https://github.com/VIRUXE/rage-cli/releases/do
 
 ## Run
 
+For a first installation or an update, run this one-line command in a terminal:
+
+```bash
+mkdir -p "$HOME/Downloads" && curl -fL https://raw.githubusercontent.com/GREYBE4RD/GTAVXR-Linux/main/gtavxr-linux.py -o "$HOME/Downloads/gtavxr-linux.py" && python3 "$HOME/Downloads/gtavxr-linux.py"
+```
+
+This creates `~/Downloads` if necessary, downloads the current `gtavxr-linux.py` from this repository's `main` branch (replacing an older copy), and runs it with Python 3. The launcher finds GTA V Legacy, Proton, and SteamVR, then offers to install GTAVXR or update a supported older installation. Once installation checks pass, it launches the game. Start SteamVR and connect your headset before launching. System prerequisites listed above must already be installed. Because this command runs downloaded code, review the [launcher source](gtavxr-linux.py) before use if desired.
+
+Alternatively, download the script manually:
+
 Download [gtavxr-linux.py](gtavxr-linux.py), open a terminal in the directory containing it, and run:
 
 ```bash
