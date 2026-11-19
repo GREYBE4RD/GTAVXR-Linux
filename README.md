@@ -22,17 +22,25 @@ mkdir -p ~/.local/bin && curl -fL https://github.com/VIRUXE/rage-cli/releases/do
 
 ## Run
 
-For a first installation or an update, run this one-line command in a terminal:
+For a first installation or to download an updated Linux launcher, run this one-line command in a terminal:
 
 ```bash
-mkdir -p "$HOME/Downloads" && curl -fL https://raw.githubusercontent.com/GREYBE4RD/GTAVXR-Linux/main/gtavxr-linux.py -o "$HOME/Downloads/gtavxr-linux.py" && python3 "$HOME/Downloads/gtavxr-linux.py"
+mkdir -p "$HOME/Downloads" && curl -fL https://raw.githubusercontent.com/GREYBE4RD/GTAVXR-Linux/main/gtavxr-linux.py -o "$HOME/Downloads/gtavxr-linux.py" && chmod +x "$HOME/Downloads/gtavxr-linux.py" && "$HOME/Downloads/gtavxr-linux.py"
 ```
 
-This creates `~/Downloads` if necessary, downloads the current `gtavxr-linux.py` from this repository's `main` branch (replacing an older copy), and runs it with Python 3. The launcher finds GTA V Legacy, Proton, and SteamVR, then offers to install GTAVXR or update a supported older installation. Once installation checks pass, it launches the game. Start SteamVR and connect your headset before launching. System prerequisites listed above must already be installed. Because this command runs downloaded code, review the [launcher source](gtavxr-linux.py) before use if desired.
+This creates `~/Downloads` if necessary, downloads the current `gtavxr-linux.py` from the repository's `main` branch (replacing an older downloaded copy), makes it executable, and runs it. The launcher finds GTA V Legacy, Proton, and SteamVR, then offers to install GTAVXR or update a supported older installation. Once installation checks pass, it launches the game.
 
-Alternatively, download the script manually:
+**To run GTAVXR normally on later sessions**, start SteamVR, connect your headset, and run the existing launcher without downloading it again:
 
-Download [gtavxr-linux.py](gtavxr-linux.py), open a terminal in the directory containing it, and run:
+```bash
+"$HOME/Downloads/gtavxr-linux.py"
+```
+
+To get a newer Linux launcher in the future, repeat the first one-line download command. The executable permission will be applied again. Running the script with `python3 "$HOME/Downloads/gtavxr-linux.py"` also works and does not require executable permission.
+
+System prerequisites listed above must already be installed. Because these commands run downloaded code, review the [launcher source](gtavxr-linux.py) before use if desired.
+
+Alternatively, [download gtavxr-linux.py](gtavxr-linux.py) manually, open a terminal in the directory containing it, and run:
 
 ```bash
 python3 gtavxr-linux.py
