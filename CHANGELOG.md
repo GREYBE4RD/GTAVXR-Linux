@@ -1,4 +1,12 @@
 # GTAVXR changelog
+## Linux launcher v1.6 (2026-11-21)
+
+- Added an experimental opt-in `--fsr 3|4` OptiScaler test mode for GTAVXR 1.0.5 under Proton.
+- Accepts user-supplied OptiScaler and DLSS input DLLs; configures Wine loading, FSR settings, and a temporary SR-enabled VR profile without changing normal VR settings.
+- Disables VR frame generation; preserves the SteamVR workaround and existing DXVK AMD workaround.
+- Temporarily stages additional files with a verified journal; refuses conflicts, removes unmodified files after game exit and recovers after interrupted sessions.
+- Python syntax and simulated staging, cleanup and configuration tests passed. Real interception, FSR activation and stereo VR gameplay remain unverified.
+
 ## Linux launcher v1.5 (2026-11-18)
 
 - Updated the pinned official GTAVXR installer to upstream 1.0.5 (new URL, size, SHA-256, executable hash and runtime-file inventory).

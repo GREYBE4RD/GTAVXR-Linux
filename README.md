@@ -2,7 +2,7 @@
 
 Linux installer and launcher for [GTAVXR by LVL](https://github.com/LVL-VR/GTAVXR), using **GTA V Legacy** and **Proton** with **SteamVR/OpenXR**. This repository is a Linux-focused fork. The upstream source snapshot, documentation, and third-party notices are retained in `code/`, `docs/`, and `THIRD_PARTY_NOTICES.md`.
 
-**Status:** experimental Linux launcher v1.5 (GTAVXR upstream 1.0.5). Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
+**Status:** experimental Linux launcher v1.6 (GTAVXR upstream 1.0.5). Tested on Arch Linux with an AMD RX 9070 XT, Proton 11.0, SteamVR 2.19.3 and Steam Frame. Other GPUs, headsets, distributions and Proton versions have not been verified. This is not a native Linux port; the launcher runs the Windows GTAVXR game through Proton.
 
 ## Requirements
 
@@ -75,6 +75,26 @@ The upgrade verifies the old installation and reconstructs the new version befor
 The isolated VR Proton prefix, existing Story Mode saves, imported saves, and `~/.local/share/gtavxr-linux/vr-settings.ini` are preserved. No additional GTA V mods are installed. If the 1.0.2 installation has missing or modified files, repair it first with the previous Linux v1.4 launcher. The new installer will not overwrite unrecognised files.
 
 **Testing status:** Version 1.5 has passed Python syntax, synthetic embedded-bundle validation, upgrade, rollback and interruption-recovery tests. The full 1.0.5 download, reconstruction and gameplay have not yet been tested on a live GTA V installation. Back up your saves independently before performing a first live upgrade.
+
+## Experimental FSR test (Linux v1.6)
+
+**Opt-in and unverified for GTAVXR.** GTAVXR uses custom DLSS forwarders and independent per-eye rendering. OptiScaler's standard injection may not intercept these calls, or may produce incorrect stereo images. **Do not consider FSR active merely because the launcher prints "FSR test requested."** Confirm the active upscaler in OptiScaler's logs and verify *both* headset views before claiming a performance benefit.
+
+This experiment uses [OptiScaler](https://github.com/optiscaler/OptiScaler) v0.9.5. It is **not bundled or downloaded** by the launcher. Obtain the [official release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.5), extract its `.7z` archive and find the directory containing `OptiScaler.dll` and `OptiScaler.ini`. You must also supply a legitimate 64-bit `nvngx_dlss.dll` file in a separate local directory, or alongside OptiScaler. GTAVXR's existing DLSS SR path requires the file. Neither package is redistributed here.
+
+Run with both local directories adjusted to your files (example for FSR 4 on an RDNA 4 GPU):
+
+```bash
+python3 gtavxr-linux.py launch --fsr 4 --optiscaler-dir "/path/to/extracted/OptiScaler" --fsr-dlss-dir "/path/to/dlss"
+```
+
+For FSR 3, change `--fsr 4` to `--fsr 3`. Add `--dry-run` for preflight checks without staging game files. To return to the normal launch, omit the FSR options.
+
+The launcher temporarily stages the OptiScaler loader as `winmm.dll`, a separate `OptiScaler.ini`, and any matching support DLLs/resource folders from the extracted package. It refuses filenames already present in the GTA directory. It sets Wine's `winmm=n,b` override, requests FSR 3.1 as the backend (and requests an FSR 4 upgrade with `--fsr 4`), and selects SR Quality in a **temporary per-session VR settings file**. Your usual VR settings remain unchanged. Frame generation is disabled. The verified SteamVR compositor patch and existing AMD workaround are unchanged.
+
+The staged game files are removed when GTA exits. If a session is interrupted, the next normal launch uses a recorded file journal to recover them after GTA closes. It refuses to delete modified files. Logs generated independently by OptiScaler are not managed by this cleanup.
+
+**Testing status:** Python syntax and simulated file staging, configuration, cleanup, crash recovery and collision tests passed. Actual FSR activation, DLL interception, stereoscopic rendering, and gameplay under Proton have **not** been verified. If GTAVXR bypasses the usual OptiScaler hooks, a GTAVXR-specific bridge change will be required.
 
 ## SteamVR compositor workaround
 

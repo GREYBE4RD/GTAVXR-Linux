@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.5.
+"""GTAVXR Linux installer and VR launcher v1.6.
 
 Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
@@ -56,7 +56,7 @@ PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/pr
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.5'
+VERSION = '1.6'
 # Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
 UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
@@ -1167,6 +1167,213 @@ def status(args):
         print(f'SteamVR patch status unavailable: {error}')
 
 
+# Experimental, opt-in OptiScaler / FSR injection. No third-party binaries are shipped.
+FSR_JOURNAL = 'gtavxr-linux-fsr-stage-v1.json'
+
+
+def fsr_sha(path):
+    h = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fsr_pe64(path):
+    """Reject obviously incorrect / 32-bit DLLs before staging."""
+    with path.open('rb') as source:
+        head = source.read(4096)
+    if len(head) < 0x40 or head[:2] != b'MZ':
+        return False
+    pe = struct.unpack_from('<I', head, 0x3c)[0]
+    return pe + 6 <= len(head) and head[pe:pe + 4] == b'PE\0\0' and struct.unpack_from('<H', head, pe + 4)[0] == 0x8664
+
+
+def fsr_set_ini_values(original, values):
+    """Change named keys under named sections without altering the source INI."""
+    current = None
+    done = set()
+    lines = original.splitlines(keepends=True)
+    result = []
+    for line in lines:
+        match = re.match(r'^\s*\[([^\]]+)\]', line)
+        if match:
+            current = match.group(1).strip().casefold()
+        else:
+            match = re.match(r'^(\s*)([A-Za-z][A-Za-z0-9_]*)\s*=([^\r\n]*)(\r?\n)?$', line)
+            if match:
+                key = (current, match.group(2).casefold())
+                if key in values:
+                    check(key not in done, f'Duplicate OptiScaler INI key: {key}')
+                    line = match.group(1) + match.group(2) + '=' + values[key] + (match.group(4) or '')
+                    done.add(key)
+        result.append(line)
+    check(done == set(values), f'OptiScaler configuration keys missing: {sorted(set(values) - done)}')
+    return ''.join(result)
+
+
+def fsr_optiscaler_config(source, mode):
+    values = {
+        ('upscalers', 'dx11upscaler'): 'fsr31_12' if mode == '4' else 'fsr31',
+        ('upscalers', 'dx12upscaler'): 'fsr31',
+        ('framegen', 'enabled'): 'false',
+        ('framegen', 'fginput'): 'nofg',
+        ('framegen', 'fgoutput'): 'nofg',
+        ('fsr', 'fsr4update'): 'true' if mode == '4' else 'false',
+    }
+    return fsr_set_ini_values(source.read_text(encoding='utf-8-sig'), values).encode('utf-8')
+
+
+def fsr_profile(source, destination):
+    """Make a per-session SR profile. Never modify the user's normal VR profile."""
+    data = source.read_text(encoding='utf-8-sig')
+    match = re.search(r'(?im)^\s*\[Graphics\]\s*$', data)
+    if not match:
+        data += '\n[Graphics]\nupscale=quality\nneural=0\n'
+    else:
+        start = match.end()
+        next_section = re.search(r'(?m)^\s*\[[^\]]+\]\s*$', data[start:])
+        end = start + next_section.start() if next_section else len(data)
+        section = data[start:end]
+        for key, value in [('upscale', 'quality'), ('neural', '0')]:
+            if re.search(r'(?im)^\s*' + key + r'\s*=', section):
+                section = re.sub(r'(?im)^(\s*' + key + r'\s*=)[^\r\n]*', lambda m: m.group(1) + value, section, count=1)
+            else:
+                section += '\n' + key + '=' + value + '\n'
+        data = data[:start] + section + data[end:]
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with destination.open('x', encoding='utf-8') as out:
+        out.write(data)
+    destination.chmod(0o600)
+
+
+def fsr_preflight(args, game):
+    check(args.optiscaler_dir is not None, 'FSR test needs --optiscaler-dir /path/to/extracted/OptiScaler')
+    source = args.optiscaler_dir.expanduser().resolve()
+    check(source.is_dir() and source != game and game not in source.parents,
+          'OptiScaler files must be in a separate extracted directory outside GTA V')
+    core = source / 'OptiScaler.dll'
+    ini = source / 'OptiScaler.ini'
+    check(core.is_file() and not core.is_symlink() and fsr_pe64(core),
+          f'OptiScaler 64-bit DLL not found: {core}')
+    check(ini.is_file() and not ini.is_symlink(), f'OptiScaler INI not found: {ini}')
+    check(core.stat().st_size <= 100 * 1024 * 1024, 'Unexpectedly large OptiScaler DLL')
+    mode = args.fsr
+    configuration = fsr_optiscaler_config(ini, mode)
+    model = (args.fsr_dlss_dir.expanduser().resolve() if args.fsr_dlss_dir else source)
+    dll = model / 'nvngx_dlss.dll'
+    check(dll.is_file() and not dll.is_symlink() and fsr_pe64(dll),
+          f'GTAVXR requires a local 64-bit nvngx_dlss.dll model. Supply --fsr-dlss-dir with that file: {dll}')
+    check(model != game and game not in model.parents, 'DLSS model directory must be outside GTA V')
+    items = [('winmm.dll', 'file', core), ('OptiScaler.ini', 'data', configuration)]
+    # Optional support DLLs and OptiScaler resource folders from the user's own package.
+    for child in sorted(source.iterdir()):
+        if child.name in ('OptiScaler.dll', 'OptiScaler.ini'):
+            continue
+        if child.is_symlink():
+            continue
+        if child.is_file() and child.suffix.casefold() == '.dll' and child.name.casefold() != 'winmm.dll':
+            items.append((child.name, 'link', child))
+        elif child.is_dir() and child.name.casefold() in ('optiscaler', 'plugins', 'custom'):
+            items.append((child.name, 'link', child))
+    names = [name.casefold() for name, _, _ in items]
+    check(len(names) == len(set(names)), 'Duplicate OptiScaler target filenames')
+    for name, _, _ in items:
+        check(not (game / name).exists() and not (game / name).is_symlink(),
+              f'FSR staging would conflict with an existing GTA file: {game / name}')
+    check(not (game / FSR_JOURNAL).exists(),
+          'Existing FSR stage requires recovery before launching')
+    return model, configuration, items
+
+
+def fsr_add_overrides(env, model, mode, wine_path):
+    overrides = env.get('WINEDLLOVERRIDES', '').strip().strip(';')
+    check(not re.search(r'(?i)(^|;)\s*winmm\s*=', overrides),
+          'WINEDLLOVERRIDES already configures winmm; cannot safely merge FSR injection')
+    env['WINEDLLOVERRIDES'] = (overrides + ';' if overrides else '') + 'winmm=n,b'
+    env['GTAVXR_DLSS_DIR'] = wine_path(model)
+    if mode == '4':
+        env['PROTON_FSR4_UPGRADE'] = '1'
+
+
+def fsr_stage(args, game, items):
+    """Journal first so interrupted staging is safe to recover next launch."""
+    journal = game / FSR_JOURNAL
+    entries = []
+    for name, kind, value in items:
+        if kind == 'file':
+            entries.append({'name': name, 'kind': kind, 'sha256': fsr_sha(value)})
+        elif kind == 'data':
+            entries.append({'name': name, 'kind': kind, 'sha256': hashlib.sha256(value).hexdigest()})
+        else:
+            entries.append({'name': name, 'kind': kind, 'target': str(value.resolve())})
+    record = {'schema': 'gtavxr-linux-fsr-stage-v1', 'game': str(game), 'entries': entries}
+    with journal.open('x', encoding='utf-8') as out:
+        json.dump(record, out, indent=2)
+        out.flush()
+        os.fsync(out.fileno())
+    try:
+        for name, kind, value in items:
+            dest = game / name
+            check(not dest.exists() and not dest.is_symlink(), f'FSR target appeared during staging: {dest}')
+            if kind == 'link':
+                dest.symlink_to(value.resolve(), target_is_directory=value.is_dir())
+            else:
+                with dest.open('xb') as target:
+                    if kind == 'file':
+                        with value.open('rb') as origin:
+                            shutil.copyfileobj(origin, target)
+                    else:
+                        target.write(value)
+                    target.flush()
+                    os.fsync(target.fileno())
+        print('FSR test: OptiScaler staged temporarily; frame generation disabled.')
+    except BaseException:
+        # Leave any modified or unknown files untouched; recovery checks identities.
+        fsr_recover(game, running=False)
+        raise
+
+
+def fsr_recover(game, running=False):
+    """Remove only the exact temporary files recorded by our stage journal."""
+    game = game.resolve()
+    journal = game / FSR_JOURNAL
+    if not journal.exists() and not journal.is_symlink():
+        return False
+    check(not journal.is_symlink() and journal.is_file(), f'Unsafe FSR stage journal: {journal}')
+    check(not running, 'An FSR-enabled GTA session may still be running. Close GTA before recovering temporary files.')
+    record = json.loads(journal.read_text(encoding='utf-8'))
+    check(record.get('schema') == 'gtavxr-linux-fsr-stage-v1' and record.get('game') == str(game),
+          'Unknown FSR stage journal; refusing automatic cleanup')
+    entries = record.get('entries')
+    check(isinstance(entries, list) and len(entries) <= 100, 'Invalid FSR stage manifest')
+    names = set()
+    # Validate all entries before deleting any file.
+    for entry in entries:
+        name = entry.get('name')
+        check(isinstance(name, str) and bool(re.fullmatch(r'[A-Za-z0-9_+.-]+', name)) and name != FSR_JOURNAL,
+              'Unexpected FSR cleanup path')
+        check(name.casefold() not in names, 'Duplicate FSR cleanup path')
+        names.add(name.casefold())
+        dest = game / name
+        kind = entry.get('kind')
+        check(kind in ('file', 'data', 'link'), 'Unknown FSR cleanup file type')
+        if kind == 'link':
+            if dest.exists() or dest.is_symlink():
+                check(dest.is_symlink() and os.readlink(dest) == entry.get('target'),
+                      f'FSR staged link changed; preserving it: {dest}')
+        else:
+            if dest.exists() or dest.is_symlink():
+                check(dest.is_file() and not dest.is_symlink() and fsr_sha(dest) == entry.get('sha256'),
+                      f'FSR staged file changed; preserving it: {dest}')
+    for entry in reversed(entries):
+        dest = game / entry['name']
+        if dest.is_symlink() or dest.exists():
+            dest.unlink()
+    journal.unlink()
+    print('FSR test: Temporary OptiScaler files removed.')
+    return True
+
 def launch(args):
     installed(args, verify=False)
     if not args.dry_run:
@@ -1214,6 +1421,15 @@ def launch(args):
         'DISABLE_XR_APILAYER_reshade_1': '1',
         'PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES': '1',
     })
+    fsr_items = None
+    if args.fsr:
+        fsr_model, fsr_config, fsr_items = fsr_preflight(args, game)
+        fsr_add_overrides(env, fsr_model, args.fsr, wine_path)
+        if not args.dry_run:
+            fsr_settings = session / 'vr-settings-fsr.ini'
+            fsr_profile(profile, fsr_settings)
+            env['GTAVXR_VR_SETTINGS'] = wine_path(fsr_settings)
+        print('FSR test: OptiScaler requested (FSR ' + args.fsr + '); activation is unverified.')
     # Windows Khronos loader should discover Proton's wineopenxr64 through the
     # Wine registry. A Linux XR_RUNTIME_JSON would override it with an ELF runtime.
     env.pop('XR_RUNTIME_JSON', None)
@@ -1229,7 +1445,8 @@ def launch(args):
     print(f'VR Proton prefix (isolated): {prefix}')
     print(f'SteamVR host runtime: {active}')
     print(f'Proton: {proton}')
-    print('Optional game mods: none. DXVK AMD workaround: ' +
+    print(('Optional OptiScaler FSR test requested. ' if args.fsr else 'Optional game mods: none. ') +
+          'DXVK AMD workaround: ' +
           ('disabled' if args.no_amd_workaround else 'Intel vendor ID 8086'))
     print(f'Session: {session}')
     if args.dry_run:
@@ -1240,7 +1457,7 @@ def launch(args):
         for key in ('STEAM_COMPAT_DATA_PATH', 'SteamGameId', 'GTAVXR_USER_PLAY',
                     'GTAVXR_SESSION_DIR', 'GTAVXR_SESSIONS_ROOT', 'GTAVXR_VR_SETTINGS',
                     'GTAVXR_BRIDGE_PATH', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
-                    'DXVK_CONFIG'):
+                    'DXVK_CONFIG', 'WINEDLLOVERRIDES', 'GTAVXR_DLSS_DIR', 'PROTON_FSR4_UPGRADE'):
             print(f'  {key}={env.get(key, "<unset>")}')
         return
     native.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -1252,7 +1469,11 @@ def launch(args):
     atomic_json(session / 'session.json', receipt)
     print('Launching GTAVXR through Proton. The first run creates the isolated VR prefix.', flush=True)
     print(f'Output logs: {native / "stdout.log"} and {native / "stderr.log"}', flush=True)
+    fsr_staged = False
     try:
+        if args.fsr:
+            fsr_stage(args, game, fsr_items)
+            fsr_staged = True
         with (native / 'stdout.log').open('wb') as stdout, (native / 'stderr.log').open('wb') as stderr:
             child = subprocess.Popen(cmd, env=env, cwd=game, stdout=stdout, stderr=stderr)
             receipt['status'] = 'running'
@@ -1271,6 +1492,12 @@ def launch(args):
         print('Interrupted. The game process may still be running; no normal GTA saves were touched.', file=sys.stderr)
         print(f'Session log: {session}', file=sys.stderr)
         raise Failure('Launch interrupted; check for a remaining GTA process before launching again')
+    finally:
+        if fsr_staged:
+            if process_running('GTAVXR_SourceBaseline.exe'):
+                print('FSR test: GTA appears active. Temporary files will be cleaned on the next run after GTA closes.')
+            else:
+                fsr_recover(game, running=False)
 
 
 def uninstall(args):
@@ -1368,6 +1595,12 @@ def main():
     ap.add_argument('--dry-run', action='store_true', help='For launch only: print command, do not start game')
     ap.add_argument('--skip-vrserver-check', action='store_true',
                     help='For launch only: do not require vrserver already running')
+    ap.add_argument('--fsr', choices=('3', '4'), default=None,
+                    help='EXPERIMENTAL: opt-in OptiScaler FSR 3 or 4 test, not validated for GTAVXR stereo')
+    ap.add_argument('--optiscaler-dir', type=Path, default=None,
+                    help='Directory containing your extracted OptiScaler.dll and OptiScaler.ini')
+    ap.add_argument('--fsr-dlss-dir', type=Path, default=None,
+                    help='Directory containing an nvngx_dlss.dll needed by GTAVXR SR')
     ap.add_argument('--no-amd-workaround', action='store_true',
                     help='For launch only: do not apply DXVK Intel vendor spoof for AMD crash')
     args = ap.parse_args()
@@ -1375,11 +1608,17 @@ def main():
     if args.payload is None:
         args.payload = DEFAULT_PAYLOAD
     try:
+        if args.fsr and args.command not in ('auto', 'launch'):
+            raise Failure('--fsr is only for normal launch or explicit launch')
+        if not args.fsr and (args.optiscaler_dir or args.fsr_dlss_dir):
+            raise Failure('Choose --fsr 3 or --fsr 4 when specifying OptiScaler inputs')
         discover_paths(args)
         if args.command in ('auto', 'install', 'repair', 'update', 'launch', 'uninstall',
                             'import-saves', 'steamvr-patch', 'steamvr-restore'):
             with exclusive(args.command):
                 recover_upgrade(args)
+                if args.command in ('auto', 'launch', 'install', 'repair', 'update', 'uninstall'):
+                    fsr_recover(args.game, running=process_running('GTAVXR_SourceBaseline.exe'))
                 if args.command == 'auto':
                     auto(args)
                 elif args.command in ('install', 'repair', 'update'):
