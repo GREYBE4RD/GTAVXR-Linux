@@ -1,4 +1,15 @@
 # GTAVXR changelog
+## Linux launcher v1.9 (2026-11-22)
+
+- Added opt-in v1.9 render-thread timing to the isolated diagnostic bridge, built separately through GitHub Actions.
+- Reports world-eye capture, remaining bridge calls, swapchain acquire/wait/release, D3D11 submission and existing Flush wall time, plus remaining unmeasured time between begin and finish.
+- Keeps v1.8's full frame timing output for direct comparison; ignores non-rendered frames in the new v1.9 samples.
+- No default runtime changes, additional D3D11 Flush calls or GPU readback. Results measure elapsed CPU wall time, not GPU execution.
+
+## Linux launcher v1.8 (2026-11-21)
+
+- Added opt-in v1.8 OpenXR wall-time telemetry and a session-local diagnostic DLL option, without replacing the installed runtime.
+
 ## Linux launcher v1.7 (2026-11-21)
 
 - Replaced the v1.6 generic `winmm.dll` injection test with an opt-in, session-local NGX bridge forwarder. The alternate DLL loads the user's own OptiScaler as the Super Resolution provider; it leaves the original DLSS forwarder and official GTAVXR runtime completely unchanged.

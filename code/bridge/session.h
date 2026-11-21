@@ -11,6 +11,7 @@
 #include <openxr/openxr_platform.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iomanip>
 #include <sstream>
@@ -147,12 +148,78 @@ struct Timing180 {
         samples=shouldNotRender=0;periodSumMs=0;
     }
 };
+// v1.9: Render-thread-only wall time within the v1.8 between-calls interval.
+// No GPU queries, waits, flushes or logging are added to the rendering path.
+// Nested texture measures are subsets of world_capture, not extra frame time.
+struct Timing190 {
+    enum Metric : unsigned { WorldCapture, OtherBridge, Acquire, WaitImage,
+        CopySubmit, Flush, Release, GameOrUnmeasured, MetricCount };
+    std::atomic<bool> enabled{false};bool active=false;
+    DWORD renderThread=0;
+    uint64_t frame=0;
+    long long betweenStart=0;
+    std::array<long long,MetricCount> frameTicks{};
+    std::array<unsigned,MetricCount> frameCalls{};
+    std::array<double,MetricCount> sums{},maxes{};
+    std::array<uint64_t,MetricCount> calls{};
+    unsigned samples=0;
+    void start(uint64_t id,bool rendered) noexcept {
+        active=enabled&&rendered;
+        if(!active)return;
+        frame=id;renderThread=GetCurrentThreadId();betweenStart=Perf147::now();
+        frameTicks.fill(0);frameCalls.fill(0);
+    }
+    bool track()const noexcept {
+        return enabled&&active&&renderThread==GetCurrentThreadId();
+    }
+    void record(Metric metric,long long elapsed) noexcept {
+        if(!track()||elapsed<0)return;
+        frameTicks[metric]+=elapsed;++frameCalls[metric];
+    }
+    template<class F> auto timed(Metric metric,F&&f)->decltype(f()) {
+        if(!track())return f();
+        struct Guard {
+            Timing190* self;Metric metric;long long start;
+            ~Guard(){self->record(metric,Perf147::now()-start);}
+        } guard{this,metric,Perf147::now()};
+        return f();
+    }
+    void complete(long long finishEntry,uint64_t id,const Perf147&clock,
+                  const std::function<void(const std::string&)>&log) noexcept {
+        if(!track())return;
+        active=false;
+        if(id!=frame||finishEntry<betweenStart||clock.frequency<=0)return;
+        const long long accounted=frameTicks[WorldCapture]+frameTicks[OtherBridge];
+        frameTicks[GameOrUnmeasured]=std::max(0LL,finishEntry-betweenStart-accounted);
+        frameCalls[GameOrUnmeasured]=1;
+        for(unsigned k=0;k<MetricCount;++k){
+            const double duration=clock.ms(frameTicks[k]);
+            sums[k]+=duration;maxes[k]=std::max(maxes[k],duration);
+            calls[k]+=frameCalls[k];
+        }
+        if(++samples<120)return;
+        try {
+            static constexpr const char* names[MetricCount]={"world_capture","other_bridge",
+                "acquire","wait_image","copy_submit","flush","release","game_or_unmeasured"};
+            std::ostringstream s;s<<std::fixed<<std::setprecision(3)
+                <<"event=XR_TIMING190 frame="<<id<<" rendered_samples="<<samples;
+            for(unsigned k=0;k<MetricCount;++k){
+                s<<' '<<names[k]<<"_avg_ms="<<(sums[k]/double(samples))
+                 <<' '<<names[k]<<"_max_ms="<<maxes[k]
+                 <<' '<<names[k]<<"_calls="<<calls[k];
+            }
+            log(s.str());
+        }catch(...){enabled=false;} // A diagnostic write cannot fault OpenXR.
+        sums.fill(0);maxes.fill(0);calls.fill(0);samples=0;
+    }
+};
 struct Session {
     OpenXrApi api;
     XrInstance instance{};XrSystemId system{};XrSession session{};XrSpace space{};
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
     Perf147 perf147;
     Timing180 timing180;
+    Timing190 timing190;
     std::array<Eye,2> eyes;
     std::array<XrView,2> rendered{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     XrFrameState timing{XR_TYPE_FRAME_STATE};XrSessionState state=XR_SESSION_STATE_UNKNOWN;
@@ -414,6 +481,7 @@ struct Session {
         }
         perf147.cpuRecord(frame,generation,"begin",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());
         if(timing180.enabled)timing180.workStart=Perf147::now();
+        if(timing190.enabled)timing190.start(frame,visible);
         return out;
     }
 #include "frame_capture.inl"

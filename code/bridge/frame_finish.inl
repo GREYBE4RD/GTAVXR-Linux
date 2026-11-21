@@ -97,6 +97,7 @@
         check(perf147.cpu("xrEndFrame",[&](){return api.EndFrame(session,&ei);}),"EndFrame");
         const long long endStop180=timing180.enabled?Perf147::now():0;
         begun=false;scopeSources.invalidate();invalidate_scope_optics(!cancel);health("end_after");if(submit){if(scopePanel.active)++scope_frames;else if(panel)++menu_frames;else ++submitted;}
+        if(timing190.enabled)timing190.complete(perfStart147,frame,perf147,log);
         if(timing180.enabled)timing180.complete(finishStart180,endStart180,endStop180,
             timing.predictedDisplayPeriod,timing.shouldRender!=0,frame,perf147,log);
         perf147.cpuRecord(frame,generation,cancel?"cancel":"finish",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());

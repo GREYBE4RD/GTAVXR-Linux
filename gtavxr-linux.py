@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.8.
+"""GTAVXR Linux installer and VR launcher v1.9.
 
 Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
@@ -56,7 +56,7 @@ PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/pr
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.8'
+VERSION = '1.9'
 # Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
 UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
@@ -1403,7 +1403,8 @@ def launch(args):
         bridge = candidate.resolve()
         env['GTAVXR_BRIDGE_PATH'] = wine_path(bridge)
         env['GTAVXR_TIMING180'] = '1'
-        print(f'OpenXR CPU timing: enabled with external DLL {bridge}', flush=True)
+        env['GTAVXR_TIMING190'] = '1'
+        print(f'OpenXR CPU timing v1.9: enabled with external DLL {bridge}', flush=True)
     fsr_inputs = None
     if args.fsr:
         fsr_inputs = fsr_bridge_inputs(args, game, runtime)
@@ -1445,7 +1446,7 @@ def launch(args):
         print('Relevant environment:')
         for key in ('STEAM_COMPAT_DATA_PATH', 'SteamGameId', 'GTAVXR_USER_PLAY',
                     'GTAVXR_SESSION_DIR', 'GTAVXR_SESSIONS_ROOT', 'GTAVXR_VR_SETTINGS',
-                    'GTAVXR_BRIDGE_PATH', 'GTAVXR_TIMING180', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
+                    'GTAVXR_BRIDGE_PATH', 'GTAVXR_TIMING180', 'GTAVXR_TIMING190', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
                     'GTAVXR_FSR_PROVIDER_PATH', 'DXVK_CONFIG', 'WINEDLLOVERRIDES',
                     'GTAVXR_DLSS_DIR', 'PROTON_FSR4_UPGRADE'):
             print(f'  {key}={env.get(key, "<unset>")}')

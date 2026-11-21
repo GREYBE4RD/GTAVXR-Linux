@@ -1,0 +1,33 @@
+name: Build GTAVXR v1.9 timing diagnostic bridge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get OpenXR SDK headers
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/KhronosGroup/OpenXR-SDK.git external/openxr
+      - name: Configure x64 bridge
+        shell: pwsh
+        run: cmake -S code/bridge -B build/bridge -A x64 -DOPENXR_INCLUDE_DIR="${{ github.workspace }}/external/openxr/include"
+      - name: Build native OpenXR DLL
+        run: cmake --build build/bridge --config Release --target gtavxr_native_openxr
+      - name: Verify DLL
+        shell: pwsh
+        run: |
+          $dll = 'build/bridge/Release/gtavxr_native_openxr.dll'
+          if (-not (Test-Path $dll)) { throw 'Diagnostic DLL missing' }
+          Get-FileHash $dll -Algorithm SHA256 | Format-List
+      - name: Upload diagnostic DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtavxr-xr-timing-v1.9
+          path: build/bridge/Release/gtavxr_native_openxr.dll
+          if-no-files-found: error
