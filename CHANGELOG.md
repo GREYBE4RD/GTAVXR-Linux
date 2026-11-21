@@ -1,4 +1,12 @@
 # GTAVXR changelog
+## Linux launcher v1.7 (2026-11-21)
+
+- Replaced the v1.6 generic `winmm.dll` injection test with an opt-in, session-local NGX bridge forwarder. The alternate DLL loads the user's own OptiScaler as the Super Resolution provider; it leaves the original DLSS forwarder and official GTAVXR runtime completely unchanged.
+- Added Windows x64 source, CMake build and CI artifact for the alternate forwarder, plus offline Python isolation tests. A built forwarder must be supplied using `--fsr-forwarder`.
+- The FSR path uses a separate VR profile, provider configuration and session runtime; it does not add or replace files in the GTA V directory. Normal launches still use the original verified DLLs.
+- Shortened the main README and moved detailed setup, configuration, FSR, recovery and troubleshooting information to `docs/linux/`.
+- **Not yet validated in real VR:** Native Windows compilation, FSR 3/4 provider initialization, GPU backend selection and correct stereo output still require GitHub Actions and headset tests. This remains a bridge-provider experiment, not a standalone AMD FidelityFX SDK backend.
+
 ## Linux launcher v1.6 (2026-11-21)
 
 - Added an experimental opt-in `--fsr 3|4` OptiScaler test mode for GTAVXR 1.0.5 under Proton.

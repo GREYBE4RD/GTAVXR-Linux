@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.6.
+"""GTAVXR Linux installer and VR launcher v1.7.
 
 Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
@@ -56,7 +56,7 @@ PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/pr
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.6'
+VERSION = '1.7'
 # Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
 UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
@@ -1247,91 +1247,65 @@ def fsr_profile(source, destination):
     destination.chmod(0o600)
 
 
-def fsr_preflight(args, game):
-    check(args.optiscaler_dir is not None, 'FSR test needs --optiscaler-dir /path/to/extracted/OptiScaler')
+def fsr_bridge_inputs(args, game, runtime):
+    """Validate the alternate user-supplied FSR forwarder and providers."""
+    check(args.optiscaler_dir is not None, 'FSR requires --optiscaler-dir /path/to/OptiScaler')
+    check(args.fsr_forwarder is not None,
+          'FSR requires --fsr-forwarder /path/to/nvngx.dll_gtavxr_sr.dll; see docs/linux/FSR.md')
     source = args.optiscaler_dir.expanduser().resolve()
     check(source.is_dir() and source != game and game not in source.parents,
-          'OptiScaler files must be in a separate extracted directory outside GTA V')
+          'OptiScaler files must be outside the GTA V directory')
     core = source / 'OptiScaler.dll'
     ini = source / 'OptiScaler.ini'
     check(core.is_file() and not core.is_symlink() and fsr_pe64(core),
-          f'OptiScaler 64-bit DLL not found: {core}')
+          f'64-bit OptiScaler.dll not found: {core}')
     check(ini.is_file() and not ini.is_symlink(), f'OptiScaler INI not found: {ini}')
-    check(core.stat().st_size <= 100 * 1024 * 1024, 'Unexpectedly large OptiScaler DLL')
-    mode = args.fsr
-    configuration = fsr_optiscaler_config(ini, mode)
-    model = (args.fsr_dlss_dir.expanduser().resolve() if args.fsr_dlss_dir else source)
-    dll = model / 'nvngx_dlss.dll'
-    check(dll.is_file() and not dll.is_symlink() and fsr_pe64(dll),
-          f'GTAVXR requires a local 64-bit nvngx_dlss.dll model. Supply --fsr-dlss-dir with that file: {dll}')
-    check(model != game and game not in model.parents, 'DLSS model directory must be outside GTA V')
-    items = [('winmm.dll', 'file', core), ('OptiScaler.ini', 'data', configuration)]
-    # Optional support DLLs and OptiScaler resource folders from the user's own package.
-    for child in sorted(source.iterdir()):
-        if child.name in ('OptiScaler.dll', 'OptiScaler.ini'):
+    check(core.stat().st_size <= 100 * 1024 * 1024, 'OptiScaler DLL input too large')
+    configuration = fsr_optiscaler_config(ini, args.fsr)
+    model_dir = args.fsr_dlss_dir.expanduser().resolve() if args.fsr_dlss_dir else source
+    model = model_dir / 'nvngx_dlss.dll'
+    check(model.is_file() and not model.is_symlink() and fsr_pe64(model),
+          'A real x64 nvngx_dlss.dll is required. Supply --fsr-dlss-dir.')
+    check(model_dir != game and game not in model_dir.parents,
+          'DLSS model directory must be outside GTA V')
+    alternate = args.fsr_forwarder.expanduser().resolve()
+    check(alternate.is_file() and not alternate.is_symlink() and fsr_pe64(alternate),
+          f'Alternate Windows x64 FSR forwarder is missing: {alternate}')
+    original = runtime / 'nvngx.dll_gtavxr_sr.dll'
+    check(alternate != original and fsr_sha(alternate) != fsr_sha(original),
+          'FSR forwarder matches the official DLSS forwarder; build the FSR version')
+    check(alternate != core and alternate != model, 'Invalid forwarder input')
+    return source, core, configuration, model_dir, alternate
+
+
+def fsr_stage_bridge(inputs, runtime, session):
+    """Create a private session bridge, without modifying GTA or official runtime."""
+    source, core, configuration, model_dir, alternate = inputs
+    provider = session / 'fsr-provider'
+    bridge = session / 'fsr-runtime'
+    check(not provider.exists() and not provider.is_symlink() and
+          not bridge.exists() and not bridge.is_symlink(),
+          'Session already has FSR folders')
+    provider.mkdir(mode=0o700, parents=True)
+    bridge.mkdir(mode=0o700)
+    shutil.copyfile(core, provider / 'OptiScaler.dll')
+    # OptiScaler's NGX detection expects an nvngx.dll beside its provider.
+    # The model is a user-supplied file, copied only into this VR session.
+    shutil.copyfile(model_dir / 'nvngx_dlss.dll', provider / 'nvngx.dll')
+    with (provider / 'OptiScaler.ini').open('xb') as output:
+        output.write(configuration)
+    (provider / 'OptiScaler.ini').chmod(0o600)
+    for item in sorted(source.iterdir()):
+        if item.name.casefold() in ('optiscaler.dll', 'optiscaler.ini', 'nvngx.dll') or item.is_symlink():
             continue
-        if child.is_symlink():
-            continue
-        if child.is_file() and child.suffix.casefold() == '.dll' and child.name.casefold() != 'winmm.dll':
-            items.append((child.name, 'link', child))
-        elif child.is_dir() and child.name.casefold() in ('optiscaler', 'plugins', 'custom'):
-            items.append((child.name, 'link', child))
-    names = [name.casefold() for name, _, _ in items]
-    check(len(names) == len(set(names)), 'Duplicate OptiScaler target filenames')
-    for name, _, _ in items:
-        check(not (game / name).exists() and not (game / name).is_symlink(),
-              f'FSR staging would conflict with an existing GTA file: {game / name}')
-    check(not (game / FSR_JOURNAL).exists(),
-          'Existing FSR stage requires recovery before launching')
-    return model, configuration, items
+        if item.is_file() and item.suffix.casefold() == '.dll' and item.name.casefold() != 'nvngx_dlss.dll':
+            (provider / item.name).symlink_to(item.resolve())
+        elif item.is_dir() and item.name.casefold() in ('optiscaler', 'plugins', 'custom'):
+            (provider / item.name).symlink_to(item.resolve(), target_is_directory=True)
+    shutil.copyfile(runtime / 'gtavxr_native_openxr.dll', bridge / 'gtavxr_native_openxr.dll')
+    shutil.copyfile(alternate, bridge / 'nvngx.dll_gtavxr_sr.dll')
+    print('FSR test: Isolated NGX bridge staged; original DLSS files untouched.')
 
-
-def fsr_add_overrides(env, model, mode, wine_path):
-    overrides = env.get('WINEDLLOVERRIDES', '').strip().strip(';')
-    check(not re.search(r'(?i)(^|;)\s*winmm\s*=', overrides),
-          'WINEDLLOVERRIDES already configures winmm; cannot safely merge FSR injection')
-    env['WINEDLLOVERRIDES'] = (overrides + ';' if overrides else '') + 'winmm=n,b'
-    env['GTAVXR_DLSS_DIR'] = wine_path(model)
-    if mode == '4':
-        env['PROTON_FSR4_UPGRADE'] = '1'
-
-
-def fsr_stage(args, game, items):
-    """Journal first so interrupted staging is safe to recover next launch."""
-    journal = game / FSR_JOURNAL
-    entries = []
-    for name, kind, value in items:
-        if kind == 'file':
-            entries.append({'name': name, 'kind': kind, 'sha256': fsr_sha(value)})
-        elif kind == 'data':
-            entries.append({'name': name, 'kind': kind, 'sha256': hashlib.sha256(value).hexdigest()})
-        else:
-            entries.append({'name': name, 'kind': kind, 'target': str(value.resolve())})
-    record = {'schema': 'gtavxr-linux-fsr-stage-v1', 'game': str(game), 'entries': entries}
-    with journal.open('x', encoding='utf-8') as out:
-        json.dump(record, out, indent=2)
-        out.flush()
-        os.fsync(out.fileno())
-    try:
-        for name, kind, value in items:
-            dest = game / name
-            check(not dest.exists() and not dest.is_symlink(), f'FSR target appeared during staging: {dest}')
-            if kind == 'link':
-                dest.symlink_to(value.resolve(), target_is_directory=value.is_dir())
-            else:
-                with dest.open('xb') as target:
-                    if kind == 'file':
-                        with value.open('rb') as origin:
-                            shutil.copyfileobj(origin, target)
-                    else:
-                        target.write(value)
-                    target.flush()
-                    os.fsync(target.fileno())
-        print('FSR test: OptiScaler staged temporarily; frame generation disabled.')
-    except BaseException:
-        # Leave any modified or unknown files untouched; recovery checks identities.
-        fsr_recover(game, running=False)
-        raise
 
 
 def fsr_recover(game, running=False):
@@ -1421,15 +1395,21 @@ def launch(args):
         'DISABLE_XR_APILAYER_reshade_1': '1',
         'PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES': '1',
     })
-    fsr_items = None
+    fsr_inputs = None
     if args.fsr:
-        fsr_model, fsr_config, fsr_items = fsr_preflight(args, game)
-        fsr_add_overrides(env, fsr_model, args.fsr, wine_path)
+        fsr_inputs = fsr_bridge_inputs(args, game, runtime)
+        env['GTAVXR_BRIDGE_PATH'] = wine_path(session / 'fsr-runtime/gtavxr_native_openxr.dll')
+        env['GTAVXR_FSR_PROVIDER_PATH'] = wine_path(session / 'fsr-provider/OptiScaler.dll')
+        env['GTAVXR_DLSS_DIR'] = wine_path(fsr_inputs[3])
+        if args.fsr == '4':
+            env['PROTON_FSR4_UPGRADE'] = '1'
         if not args.dry_run:
             fsr_settings = session / 'vr-settings-fsr.ini'
             fsr_profile(profile, fsr_settings)
+            fsr_stage_bridge(fsr_inputs, runtime, session)
             env['GTAVXR_VR_SETTINGS'] = wine_path(fsr_settings)
-        print('FSR test: OptiScaler requested (FSR ' + args.fsr + '); activation is unverified.')
+        print('FSR test: Separate NGX bridge requested (FSR ' + args.fsr +
+              '); GPU upscaling and stereo remain unverified.')
     # Windows Khronos loader should discover Proton's wineopenxr64 through the
     # Wine registry. A Linux XR_RUNTIME_JSON would override it with an ELF runtime.
     env.pop('XR_RUNTIME_JSON', None)
@@ -1445,7 +1425,7 @@ def launch(args):
     print(f'VR Proton prefix (isolated): {prefix}')
     print(f'SteamVR host runtime: {active}')
     print(f'Proton: {proton}')
-    print(('Optional OptiScaler FSR test requested. ' if args.fsr else 'Optional game mods: none. ') +
+    print(('Optional isolated FSR bridge requested. ' if args.fsr else 'Optional game mods: none. ') +
           'DXVK AMD workaround: ' +
           ('disabled' if args.no_amd_workaround else 'Intel vendor ID 8086'))
     print(f'Session: {session}')
@@ -1457,7 +1437,8 @@ def launch(args):
         for key in ('STEAM_COMPAT_DATA_PATH', 'SteamGameId', 'GTAVXR_USER_PLAY',
                     'GTAVXR_SESSION_DIR', 'GTAVXR_SESSIONS_ROOT', 'GTAVXR_VR_SETTINGS',
                     'GTAVXR_BRIDGE_PATH', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
-                    'DXVK_CONFIG', 'WINEDLLOVERRIDES', 'GTAVXR_DLSS_DIR', 'PROTON_FSR4_UPGRADE'):
+                    'GTAVXR_FSR_PROVIDER_PATH', 'DXVK_CONFIG', 'WINEDLLOVERRIDES',
+                    'GTAVXR_DLSS_DIR', 'PROTON_FSR4_UPGRADE'):
             print(f'  {key}={env.get(key, "<unset>")}')
         return
     native.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -1469,11 +1450,7 @@ def launch(args):
     atomic_json(session / 'session.json', receipt)
     print('Launching GTAVXR through Proton. The first run creates the isolated VR prefix.', flush=True)
     print(f'Output logs: {native / "stdout.log"} and {native / "stderr.log"}', flush=True)
-    fsr_staged = False
     try:
-        if args.fsr:
-            fsr_stage(args, game, fsr_items)
-            fsr_staged = True
         with (native / 'stdout.log').open('wb') as stdout, (native / 'stderr.log').open('wb') as stderr:
             child = subprocess.Popen(cmd, env=env, cwd=game, stdout=stdout, stderr=stderr)
             receipt['status'] = 'running'
@@ -1492,12 +1469,6 @@ def launch(args):
         print('Interrupted. The game process may still be running; no normal GTA saves were touched.', file=sys.stderr)
         print(f'Session log: {session}', file=sys.stderr)
         raise Failure('Launch interrupted; check for a remaining GTA process before launching again')
-    finally:
-        if fsr_staged:
-            if process_running('GTAVXR_SourceBaseline.exe'):
-                print('FSR test: GTA appears active. Temporary files will be cleaned on the next run after GTA closes.')
-            else:
-                fsr_recover(game, running=False)
 
 
 def uninstall(args):
@@ -1600,7 +1571,9 @@ def main():
     ap.add_argument('--optiscaler-dir', type=Path, default=None,
                     help='Directory containing your extracted OptiScaler.dll and OptiScaler.ini')
     ap.add_argument('--fsr-dlss-dir', type=Path, default=None,
-                    help='Directory containing an nvngx_dlss.dll needed by GTAVXR SR')
+                    help='Directory containing a real x64 nvngx_dlss.dll model')
+    ap.add_argument('--fsr-forwarder', type=Path, default=None,
+                    help='Built Windows x64 FSR forwarder from the GitHub Actions artifact')
     ap.add_argument('--no-amd-workaround', action='store_true',
                     help='For launch only: do not apply DXVK Intel vendor spoof for AMD crash')
     args = ap.parse_args()
@@ -1610,7 +1583,7 @@ def main():
     try:
         if args.fsr and args.command not in ('auto', 'launch'):
             raise Failure('--fsr is only for normal launch or explicit launch')
-        if not args.fsr and (args.optiscaler_dir or args.fsr_dlss_dir):
+        if not args.fsr and (args.optiscaler_dir or args.fsr_dlss_dir or args.fsr_forwarder):
             raise Failure('Choose --fsr 3 or --fsr 4 when specifying OptiScaler inputs')
         discover_paths(args)
         if args.command in ('auto', 'install', 'repair', 'update', 'launch', 'uninstall',

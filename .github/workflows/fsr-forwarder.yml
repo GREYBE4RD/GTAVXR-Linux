@@ -1,0 +1,47 @@
+name: Build experimental FSR bridge forwarder
+
+on:
+  push:
+    paths:
+      - "code/bridge/fsr_forwarder.cpp"
+      - "gtavxr-linux.py"
+      - "tests/**"
+      - "code/bridge/ngx_iface.h"
+      - "code/bridge/fsr-forwarder/**"
+      - ".github/workflows/fsr-forwarder.yml"
+  workflow_dispatch:
+
+jobs:
+  python-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check launcher syntax
+        run: python3 -m py_compile gtavxr-linux.py
+      - name: Run FSR isolation tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+  build:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Windows x64 build
+        run: cmake -S code/bridge/fsr-forwarder -B build/fsr-forwarder -A x64
+      - name: Build alternate NGX SR forwarder
+        run: cmake --build build/fsr-forwarder --config Release
+      - name: Check DLL exists
+        shell: pwsh
+        run: |
+          $dll = "build/fsr-forwarder/Release/nvngx.dll_gtavxr_sr.dll"
+          if (-not (Test-Path $dll)) { throw "FSR forwarder DLL missing" }
+          Get-FileHash $dll -Algorithm SHA256 | Format-List
+      - name: Publish test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtavxr-fsr-forwarder-v1.7
+          path: build/fsr-forwarder/Release/nvngx.dll_gtavxr_sr.dll
+          if-no-files-found: error
