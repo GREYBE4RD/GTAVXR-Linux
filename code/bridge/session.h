@@ -94,11 +94,65 @@ inline void hand_world(const GxFrame&f,const double*camera,GxHandTargets&out){
     }
 }
 struct Eye {XrSwapchain swap{};std::vector<XrSwapchainImageD3D11KHR> images;bool acquired=false,waited=false;};
+// v1.8: Opt-in wall-clock timing of the render thread. CPU-only, no GPU queries,
+// flushing, or per-frame logging. Between-calls time includes game work AND waits.
+struct Timing180 {
+    enum Metric : unsigned { Wait, Begin, Locate, BridgeBeginOther, BetweenCalls,
+                             BridgeFinishPrep, End, Cadence, MetricCount };
+    bool enabled=false;
+    long long frameEntry=0,lastEntry=0,workStart=0;
+    long long waitTicks=0,beginTicks=0,locateTicks=0,cadenceTicks=0;
+    std::array<double,MetricCount> sums{},maxes{};
+    std::array<unsigned,MetricCount> counts{};
+    unsigned samples=0,shouldNotRender=0;
+    double periodSumMs=0;
+    void start(long long entry) noexcept {
+        if(!enabled)return;
+        cadenceTicks=lastEntry?entry-lastEntry:0;lastEntry=entry;frameEntry=entry;
+        workStart=waitTicks=beginTicks=locateTicks=0;
+    }
+    void add(Metric metric,long long ticks,const Perf147&clock) noexcept {
+        if(ticks<0||clock.frequency<=0)return;
+        const double ms=clock.ms(ticks);sums[metric]+=ms;
+        maxes[metric]=std::max(maxes[metric],ms);++counts[metric];
+    }
+    void complete(long long finishEntry,long long endStart,long long endStop,
+                  long long predictedPeriodNs,bool shouldRender,uint64_t frame,
+                  const Perf147&clock,const std::function<void(const std::string&)>&log) noexcept {
+        if(!enabled||!workStart)return;
+        add(Wait,waitTicks,clock);add(Begin,beginTicks,clock);add(Locate,locateTicks,clock);
+        add(BridgeBeginOther,workStart-frameEntry-waitTicks-beginTicks-locateTicks,clock);
+        add(BetweenCalls,finishEntry-workStart,clock);
+        add(BridgeFinishPrep,endStart-finishEntry,clock);
+        add(End,endStop-endStart,clock);
+        if(cadenceTicks>0)add(Cadence,cadenceTicks,clock);
+        periodSumMs+=double(predictedPeriodNs)/1.0e6;
+        if(!shouldRender)++shouldNotRender;
+        workStart=0;
+        if(++samples<120)return;
+        try {
+            static constexpr const char* names[MetricCount]={"wait","begin","locate",
+                "bridge_begin_other","between_calls","bridge_finish_prep","end","cadence"};
+            std::ostringstream s;s<<std::fixed<<std::setprecision(3)
+                <<"event=XR_TIMING180 frame="<<frame<<" samples="<<samples
+                <<" period_avg_ms="<<(periodSumMs/double(samples))
+                <<" should_not_render="<<shouldNotRender;
+            for(unsigned k=0;k<MetricCount;++k){
+                s<<' '<<names[k]<<"_avg_ms="<<(counts[k]?sums[k]/double(counts[k]):0.0)
+                 <<' '<<names[k]<<"_max_ms="<<maxes[k];
+            }
+            log(s.str());
+        }catch(...){enabled=false;} // A diagnostic write must not fault the XR bridge.
+        sums.fill(0);maxes.fill(0);counts.fill(0);
+        samples=shouldNotRender=0;periodSumMs=0;
+    }
+};
 struct Session {
     OpenXrApi api;
     XrInstance instance{};XrSystemId system{};XrSession session{};XrSpace space{};
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
     Perf147 perf147;
+    Timing180 timing180;
     std::array<Eye,2> eyes;
     std::array<XrView,2> rendered{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     XrFrameState timing{XR_TYPE_FRAME_STATE};XrSessionState state=XR_SESSION_STATE_UNKNOWN;
@@ -303,7 +357,10 @@ struct Session {
                 log("WORLD_PIXELS eye="+std::to_string(eye)+detail);
         }
         if(!running)return out;
+        if(timing180.enabled)timing180.start(perfStart147);
+        const long long waitStart180=timing180.enabled?Perf147::now():0;
         XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};check(perf147.cpu("xrWaitFrame",[&](){return api.WaitFrame(session,&wi,&timing);}),"WaitFrame");
+        if(timing180.enabled)timing180.waitTicks=Perf147::now()-waitStart180;
         {   // build133 FRAME_TIMING: delivered cadence between successive WaitFrame returns, every 600 frames.
             LARGE_INTEGER now;QueryPerformanceCounter(&now);
             if(timingLast&&timingFrequency>0){const double ms=double(now.QuadPart-timingLast)*1000.0/double(timingFrequency);
@@ -315,11 +372,15 @@ struct Session {
             timingLast=now.QuadPart;
         }
         if(pauseSpaceChange&&timing.predictedDisplayTime>=pauseSpaceChange){pauseAnchor.reset();pauseSpaceChange=0;}
+        const long long beginStart180=timing180.enabled?Perf147::now():0;
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};check(perf147.cpu("xrBeginFrame",[&](){return api.BeginFrame(session,&bi);}),"BeginFrame");begun=true;++frame;generation=gen;
+        if(timing180.enabled)timing180.beginTicks=Perf147::now()-beginStart180;
         perf147.open(device.Get(),context.Get(),frame,generation);
         health("begin_after");
         XrViewLocateInfo li{XR_TYPE_VIEW_LOCATE_INFO};li.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;li.displayTime=timing.predictedDisplayTime;li.space=space;
+        const long long locateStart180=timing180.enabled?Perf147::now():0;
         XrViewState vs{XR_TYPE_VIEW_STATE};uint32_t count=0;check(perf147.cpu("xrLocateViews",[&](){return api.LocateViews(session,&li,&vs,2,&count,rendered.data());}),"LocateViews");
+        if(timing180.enabled)timing180.locateTicks=Perf147::now()-locateStart180;
         last_pose_tick=GetTickCount64();
         constexpr XrViewStateFlags valid=XR_VIEW_STATE_POSITION_VALID_BIT|XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_TRACKED_BIT|XR_VIEW_STATE_ORIENTATION_TRACKED_BIT;
         visible=timing.shouldRender&&count==2&&(vs.viewStateFlags&valid)==valid&&state==XR_SESSION_STATE_FOCUSED;
@@ -352,6 +413,7 @@ struct Session {
             log(s.str());
         }
         perf147.cpuRecord(frame,generation,"begin",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());
+        if(timing180.enabled)timing180.workStart=Perf147::now();
         return out;
     }
 #include "frame_capture.inl"

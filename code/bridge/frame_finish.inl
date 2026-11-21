@@ -2,6 +2,7 @@
     void finish(uint64_t id,uint64_t gen,bool cancel=false) {
         if(!begun){scopeSources.invalidate();demand(cancel||!id,"XR_NO_FRAME");return;}
         const long long perfStart147=Perf147::now();perf147.steps.reset(perfStart147);
+        const long long finishStart180=timing180.enabled?perfStart147:0;
         demand(cancel||(!fault&&id==frame&&gen==generation),"XR_FINISH_IDENTITY");
         for(auto&e:eyes)demand(!e.acquired,"XR_UNRELEASED_IMAGE");demand(!panelEye.acquired&&!scopePanelEye.acquired,"XR_UNRELEASED_IMAGE");
         bool submit=!cancel&&visible;demand(!submit||copied==2,"XR_INCOMPLETE_PAIR");
@@ -91,7 +92,13 @@
             for(unsigned i=0;i<opticCount;++i)layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&opticLayers[i]);
         if(haveSubtitles)layers[count++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&subtitles);
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};ei.displayTime=timing.predictedDisplayTime;ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;ei.layerCount=count;ei.layers=submit?layers:nullptr;
-        health("end_before");perf147.seal(context.Get());check(perf147.cpu("xrEndFrame",[&](){return api.EndFrame(session,&ei);}),"EndFrame");begun=false;scopeSources.invalidate();invalidate_scope_optics(!cancel);health("end_after");if(submit){if(scopePanel.active)++scope_frames;else if(panel)++menu_frames;else ++submitted;}
+        health("end_before");perf147.seal(context.Get());
+        const long long endStart180=timing180.enabled?Perf147::now():0;
+        check(perf147.cpu("xrEndFrame",[&](){return api.EndFrame(session,&ei);}),"EndFrame");
+        const long long endStop180=timing180.enabled?Perf147::now():0;
+        begun=false;scopeSources.invalidate();invalidate_scope_optics(!cancel);health("end_after");if(submit){if(scopePanel.active)++scope_frames;else if(panel)++menu_frames;else ++submitted;}
+        if(timing180.enabled)timing180.complete(finishStart180,endStart180,endStop180,
+            timing.predictedDisplayPeriod,timing.shouldRender!=0,frame,perf147,log);
         perf147.cpuRecord(frame,generation,cancel?"cancel":"finish",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());
         LARGE_INTEGER qpc;QueryPerformanceCounter(&qpc);
         if(!compact_logging||frame<=5||frame%120==0)log("FRAME id="+std::to_string(frame)+" generation="+std::to_string(generation)+" display_time="+std::to_string(timing.predictedDisplayTime)+" qpc="+std::to_string(qpc.QuadPart)+" copies="+std::to_string(copied)+" layers="+std::to_string(ei.layerCount)+" mode="+(scopePanel.active?"SCOPE":panel?"MENU":"WORLD")+" projection="+(world?"1":"0")+" subtitles="+(haveSubtitles?"1":"0")+

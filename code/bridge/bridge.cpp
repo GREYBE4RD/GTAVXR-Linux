@@ -59,6 +59,9 @@ int GX_CALL create(const GxConfig*c,void**out) noexcept {
             if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&create),&self)&&
                GetModuleFileNameW(self,module,MAX_PATH)<MAX_PATH){std::wstring m(module);p->xr.chainBridgeDir=m.substr(0,m.find_last_of(L"/\\"));}}
         p->xr.perf147.init(false,p->xr.log); // build148: perf telemetry OFF (user closed the performance section)
+        wchar_t timing180[8]={};GetEnvironmentVariableW(L"GTAVXR_TIMING180",timing180,8);
+        p->xr.timing180.enabled=!wcscmp(timing180,L"1");
+        if(p->xr.timing180.enabled)p->xr.log("XR_TIMING180 enabled=1 sample_window=120 cpu_only=1");
         if(!p->xr.compact_logging)p->xr.first_image=[p,directory](ID3D11Texture2D*t,unsigned e){native_xr::save_first_image(p->xr,t,e,directory);};
         return guarded(p,[&](Bridge&v){v.xr.initialize(static_cast<ID3D11Device*>(c->d3d_device),c->width,c->height,c->loader_path,&preopened);});
     }catch(const std::exception&e){error_text=e.what();return 1;}catch(...){error_text="CREATE_EXCEPTION";return 1;}

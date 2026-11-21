@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.7.
+"""GTAVXR Linux installer and VR launcher v1.8.
 
 Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
@@ -56,7 +56,7 @@ PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/pr
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.7'
+VERSION = '1.8'
 # Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
 UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
@@ -1395,6 +1395,15 @@ def launch(args):
         'DISABLE_XR_APILAYER_reshade_1': '1',
         'PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES': '1',
     })
+    if args.timing_bridge is not None:
+        check(args.fsr is None, 'CPU timing bridge cannot be combined with the optional FSR bridge')
+        candidate = args.timing_bridge.expanduser()
+        check(candidate.is_file() and not candidate.is_symlink() and candidate.suffix.lower() == '.dll',
+              f'Diagnostic bridge DLL not found or not a regular DLL: {candidate}')
+        bridge = candidate.resolve()
+        env['GTAVXR_BRIDGE_PATH'] = wine_path(bridge)
+        env['GTAVXR_TIMING180'] = '1'
+        print(f'OpenXR CPU timing: enabled with external DLL {bridge}', flush=True)
     fsr_inputs = None
     if args.fsr:
         fsr_inputs = fsr_bridge_inputs(args, game, runtime)
@@ -1436,7 +1445,7 @@ def launch(args):
         print('Relevant environment:')
         for key in ('STEAM_COMPAT_DATA_PATH', 'SteamGameId', 'GTAVXR_USER_PLAY',
                     'GTAVXR_SESSION_DIR', 'GTAVXR_SESSIONS_ROOT', 'GTAVXR_VR_SETTINGS',
-                    'GTAVXR_BRIDGE_PATH', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
+                    'GTAVXR_BRIDGE_PATH', 'GTAVXR_TIMING180', 'GTAVXR_LOADER_PATH', 'GTAVXR_STEAMVR_BOOTSTRAP',
                     'GTAVXR_FSR_PROVIDER_PATH', 'DXVK_CONFIG', 'WINEDLLOVERRIDES',
                     'GTAVXR_DLSS_DIR', 'PROTON_FSR4_UPGRADE'):
             print(f'  {key}={env.get(key, "<unset>")}')
@@ -1563,6 +1572,8 @@ def main():
     ap.add_argument('--rage', type=str, default=str(RAGE_DEFAULT))
     ap.add_argument('--proton', type=Path, default=None)
     ap.add_argument('--steam', type=Path, default=None)
+    ap.add_argument('--timing-bridge', type=Path, default=None,
+                    help='Opt-in CPU-only XR timing via a separately built Windows x64 bridge DLL')
     ap.add_argument('--dry-run', action='store_true', help='For launch only: print command, do not start game')
     ap.add_argument('--skip-vrserver-check', action='store_true',
                     help='For launch only: do not require vrserver already running')
