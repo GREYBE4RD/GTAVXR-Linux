@@ -1,4 +1,11 @@
 # GTAVXR changelog
+## Linux launcher v1.10 (2026-11-22)
+
+- Added optional cross-thread bridge and world-eye capture timing, including lock contention, for rendered frames.
+- Reports begin/capture/finish thread IDs, counts of captures on other threads, and nested OpenXR acquire/wait/release and D3D11 submit/Flush CPU wall times.
+- Retains v1.8 and v1.9 timing output for comparison. Calls from other threads can overlap the measured frame interval and must not be subtracted from its duration.
+- Keeps the installed runtime unchanged; no additional D3D11 Flush, GPU queries, or waits.
+
 ## Linux launcher v1.9 (2026-11-22)
 
 - Added opt-in v1.9 render-thread timing to the isolated diagnostic bridge, built separately through GitHub Actions.

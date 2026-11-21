@@ -213,6 +213,94 @@ struct Timing190 {
         sums.fill(0);maxes.fill(0);calls.fill(0);samples=0;
     }
 };
+// v1.10: Cross-thread capture and bridge timing. Bridge::lock serializes every
+// record and nested capture measurement. It adds no GPU queries or D3D calls.
+// Time recorded on other threads can overlap the begin/finish frame interval.
+struct Timing1100 {
+    enum Metric : unsigned { Capture, CaptureLockWait, Acquire, WaitImage,
+        CopySubmit, Flush, Release, OtherBeginThread, OtherThread, MetricCount };
+    std::atomic<bool> enabled{false};
+    bool active=false,offThreadCapture=false;
+    uint64_t frame=0;
+    DWORD beginThread=0,lastCaptureThread=0,lastFinishThread=0;
+    std::array<long long,MetricCount> frameTicks{};
+    std::array<unsigned,MetricCount> frameCalls{};
+    std::array<double,MetricCount> sums{},maxes{};
+    std::array<uint64_t,MetricCount> calls{};
+    unsigned samples=0,framesNoCapture=0,framesOffThreadCapture=0,finishMismatch=0;
+    uint64_t captureOnBegin=0,captureOffBegin=0;
+    void start(uint64_t id,bool rendered) noexcept {
+        active=enabled&&rendered;
+        if(!active)return;
+        frame=id;beginThread=GetCurrentThreadId();lastCaptureThread=0;
+        offThreadCapture=false;frameTicks.fill(0);frameCalls.fill(0);
+    }
+    // All non-atomic state is accessed only under the bridge's exclusive lock.
+    bool track()const noexcept {return enabled&&active;}
+    void record(Metric metric,long long ticks) noexcept {
+        if(!track()||ticks<0)return;
+        frameTicks[metric]+=ticks;++frameCalls[metric];
+    }
+    template<class F> auto timed(Metric metric,F&&f)->decltype(f()) {
+        if(!track())return f();
+        struct Guard {
+            Timing1100* self;Metric metric;long long start;
+            ~Guard(){self->record(metric,Perf147::now()-start);}
+        } guard{this,metric,Perf147::now()};
+        return f();
+    }
+    void recordCall(bool capture,DWORD thread,long long entered,long long acquired,long long ended) noexcept {
+        if(!track()||entered>acquired||acquired>ended)return;
+        if(capture){
+            record(Capture,ended-entered);
+            record(CaptureLockWait,acquired-entered);
+            lastCaptureThread=thread;
+            if(thread==beginThread)++captureOnBegin;
+            else{++captureOffBegin;offThreadCapture=true;}
+        }else{
+            record(thread==beginThread?OtherBeginThread:OtherThread,ended-entered);
+        }
+    }
+    void complete(uint64_t id,const Perf147&clock,
+                  const std::function<void(const std::string&)>&log) noexcept {
+        if(!track())return;
+        lastFinishThread=GetCurrentThreadId();active=false;
+        if(id!=frame||clock.frequency<=0)return;
+        if(!frameCalls[Capture])++framesNoCapture;
+        if(offThreadCapture)++framesOffThreadCapture;
+        if(lastFinishThread!=beginThread)++finishMismatch;
+        for(unsigned k=0;k<MetricCount;++k){
+            const double ms=clock.ms(frameTicks[k]);
+            sums[k]+=ms;maxes[k]=std::max(maxes[k],ms);
+            calls[k]+=frameCalls[k];
+        }
+        if(++samples<120)return;
+        try {
+            static constexpr const char* names[MetricCount]={"capture","capture_lock_wait",
+                "acquire","wait_image","copy_submit","flush","release",
+                "other_begin_thread","other_thread"};
+            std::ostringstream s;s<<std::fixed<<std::setprecision(3)
+                <<"event=XR_TIMING1100 frame="<<id<<" rendered_samples="<<samples
+                <<" begin_tid_last="<<beginThread
+                <<" finish_tid_last="<<lastFinishThread
+                <<" capture_tid_last="<<lastCaptureThread
+                <<" capture_on_begin_calls="<<captureOnBegin
+                <<" capture_off_begin_calls="<<captureOffBegin
+                <<" frames_no_capture="<<framesNoCapture
+                <<" frames_off_thread_capture="<<framesOffThreadCapture
+                <<" finish_thread_mismatch_frames="<<finishMismatch;
+            for(unsigned k=0;k<MetricCount;++k){
+                s<<' '<<names[k]<<"_avg_ms="<<(sums[k]/double(samples))
+                 <<' '<<names[k]<<"_max_ms="<<maxes[k]
+                 <<' '<<names[k]<<"_calls="<<calls[k];
+            }
+            log(s.str());
+        }catch(...){enabled=false;}
+        sums.fill(0);maxes.fill(0);calls.fill(0);samples=0;
+        framesNoCapture=framesOffThreadCapture=finishMismatch=0;
+        captureOnBegin=captureOffBegin=0;
+    }
+};
 struct Session {
     OpenXrApi api;
     XrInstance instance{};XrSystemId system{};XrSession session{};XrSpace space{};
@@ -220,6 +308,7 @@ struct Session {
     Perf147 perf147;
     Timing180 timing180;
     Timing190 timing190;
+    Timing1100 timing1100;
     std::array<Eye,2> eyes;
     std::array<XrView,2> rendered{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
     XrFrameState timing{XR_TYPE_FRAME_STATE};XrSessionState state=XR_SESSION_STATE_UNKNOWN;
@@ -482,6 +571,7 @@ struct Session {
         perf147.cpuRecord(frame,generation,"begin",timing.predictedDisplayTime,timing.predictedDisplayPeriod,timing.shouldRender!=0,perfStart147,Perf147::now());
         if(timing180.enabled)timing180.workStart=Perf147::now();
         if(timing190.enabled)timing190.start(frame,visible);
+        if(timing1100.enabled)timing1100.start(frame,visible);
         return out;
     }
 #include "frame_capture.inl"

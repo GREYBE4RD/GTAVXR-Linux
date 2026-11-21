@@ -26,8 +26,10 @@ template<class F> int guarded(void*h,F f,bool allow_fault=false,const char*perfP
     if(b.owner.load()==GetCurrentThreadId()){error_text="REENTRANT_BRIDGE_CALL";return 1;}
     const long long lockStart147=perfPhase147?native_xr::Perf147::now():0;
     const long long callStart190=(b.xr.timing190.enabled&&!perfPhase147)?native_xr::Perf147::now():0;
+    const long long callStart1100=(b.xr.timing1100.enabled&&!perfPhase147)?native_xr::Perf147::now():0;
     AcquireSRWLockExclusive(&b.lock);b.owner.store(GetCurrentThreadId());
     const long long lockEnd147=perfPhase147?native_xr::Perf147::now():0;
+    const long long lockAcquired1100=callStart1100?native_xr::Perf147::now():0;
     int result=0;
     try{native_xr::demand(allow_fault||!b.xr.fault,"BRIDGE_FAULTED");f(b);}
     catch(const std::exception&e){
@@ -43,6 +45,9 @@ template<class F> int guarded(void*h,F f,bool allow_fault=false,const char*perfP
     if(callStart190&&b.xr.timing190.track())
         b.xr.timing190.record(worldCapture190?native_xr::Timing190::WorldCapture:native_xr::Timing190::OtherBridge,
                               native_xr::Perf147::now()-callStart190);
+    if(callStart1100&&b.xr.timing1100.track())
+        b.xr.timing1100.recordCall(worldCapture190,GetCurrentThreadId(),callStart1100,
+                                   lockAcquired1100,native_xr::Perf147::now());
     b.owner.store(0);ReleaseSRWLockExclusive(&b.lock);return result;
 }
 int GX_CALL create(const GxConfig*c,void**out) noexcept {
@@ -69,6 +74,9 @@ int GX_CALL create(const GxConfig*c,void**out) noexcept {
         wchar_t timing190[8]={};GetEnvironmentVariableW(L"GTAVXR_TIMING190",timing190,8);
         p->xr.timing190.enabled=!wcscmp(timing190,L"1");
         if(p->xr.timing190.enabled)p->xr.log("XR_TIMING190 enabled=1 sample_window=120 rendered_only=1 cpu_only=1");
+        wchar_t timing1100[8]={};GetEnvironmentVariableW(L"GTAVXR_TIMING1100",timing1100,8);
+        p->xr.timing1100.enabled=!wcscmp(timing1100,L"1");
+        if(p->xr.timing1100.enabled)p->xr.log("XR_TIMING1100 enabled=1 sample_window=120 rendered_only=1 cross_thread=1 cpu_only=1");
         if(!p->xr.compact_logging)p->xr.first_image=[p,directory](ID3D11Texture2D*t,unsigned e){native_xr::save_first_image(p->xr,t,e,directory);};
         return guarded(p,[&](Bridge&v){v.xr.initialize(static_cast<ID3D11Device*>(c->d3d_device),c->width,c->height,c->loader_path,&preopened);});
     }catch(const std::exception&e){error_text=e.what();return 1;}catch(...){error_text="CREATE_EXCEPTION";return 1;}
