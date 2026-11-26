@@ -26,7 +26,7 @@ For a first installation or to download an updated Linux launcher, run this one-
 mkdir -p "$HOME/Downloads" && curl -fL https://raw.githubusercontent.com/GREYBE4RD/GTAVXR-Linux/main/gtavxr-linux.py -o "$HOME/Downloads/gtavxr-linux.py" && chmod +x "$HOME/Downloads/gtavxr-linux.py" && "$HOME/Downloads/gtavxr-linux.py"
 ```
 
-This creates `~/Downloads` if necessary, downloads the current `gtavxr-linux.py` from the repository's `main` branch (replacing an older downloaded copy), makes it executable, and runs it. The launcher finds GTA V Legacy, Proton, and SteamVR, then offers to install GTAVXR or update a supported older installation. Once installation checks pass, it launches the game.
+This creates `~/Downloads` if necessary, downloads the current `gtavxr-linux.py` from the repository's `main` branch (replacing an older downloaded copy), makes it executable, and runs it. The launcher finds GTA V Legacy, Proton, and SteamVR, then offers to install GTAVXR or update a supported older installation. A recognized, unpatched SteamVR compositor requires explicit confirmation before it is changed; read the warning on the main README. Once installation checks pass, it launches the game.
 
 **To run GTAVXR normally on later sessions**, start SteamVR, connect your headset, and run the existing launcher without downloading it again:
 
@@ -74,4 +74,4 @@ The isolated VR Proton prefix, existing Story Mode saves, imported saves, and `~
 
 **Testing status:** Version 1.5 has passed Python syntax, synthetic embedded-bundle validation, upgrade, rollback and interruption-recovery tests. The full 1.0.5 download, reconstruction and gameplay have not yet been tested on a live GTA V installation. Back up your saves independently before performing a first live upgrade.
 
-For normal use, the current Linux v1.7 launcher remains a single Python file named `gtavxr-linux.py`. Repeat the download command when the Python launcher changes. The launcher itself does not check GitHub for newer Python versions.
+For normal use, the current Linux v1.13 launcher remains a single Python file named `gtavxr-linux.py`. Repeat the download command when the Python launcher changes. The launcher itself does not check GitHub for newer Python versions.

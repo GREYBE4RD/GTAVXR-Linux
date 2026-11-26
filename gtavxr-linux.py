@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTAVXR Linux installer and VR launcher v1.10.
+"""GTAVXR Linux installer and VR launcher v1.13.
 
 Downloads and verifies official GTAVXR.exe 1.0.5 if no local payload exists,
 then extracts its embedded release ZIP without executing the Windows installer.
@@ -15,12 +15,12 @@ status:     check installed files, Proton, and the SteamVR runtime.
 launch:     launch GTAVXR through Proton using a separate VR prefix.
 import-saves: copy missing normal GTA V Story Mode saves into the VR prefix.
 steamvr-status / steamvr-patch / steamvr-restore: manage a version-locked
-    SteamVR 2.19.3 Vulkan descriptor-pool workaround.
+    supported SteamVR Vulkan descriptor-pool workarounds.
 uninstall:  remove only hash-verified installer-owned files.
 
 The VR prefix keeps normal GTA V saves and settings separate. Imported saves
 are copied, never moved, and VR progress is not overwritten. SteamVR patching
-is permitted only for the exact verified compositor build and when it is closed.
+is permitted only for verified compositor builds and when SteamVR is closed.
 """
 import argparse
 from datetime import datetime, timezone
@@ -56,7 +56,7 @@ PROTON_DEFAULT = Path('/mnt/linflux/SteamLibrary/steamapps/common/Proton 11.0/pr
 STEAM_DEFAULT = Path.home() / '.local/share/Steam'
 DATA_ROOT = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'gtavxr-linux'
 APP_ID = '271590'
-VERSION = '1.10'
+VERSION = '1.13'
 # Pinned to the official LVL-VR GTAVXR 1.0.5 release asset. Do not use /latest:
 # later releases need their own identity, payload manifest and installer support.
 UPSTREAM_EXE_URL = 'https://github.com/LVL-VR/GTAVXR/releases/download/v1.0.5/GTAVXR.exe'
@@ -77,16 +77,38 @@ UPSTREAM_RUNTIME_FILES = frozenset({
     'scripthost/ScriptHookVDotNet-THIRD-PARTY-NOTICES.md',
 })
 MAX_EXE_BYTES = 64 * 1024 * 1024
-STEAMVR_ORIGINAL_SHA = 'b3747b541c86f683286f13fcce9ed7761e0258ecef3827c5ce915167226947fe'
-STEAMVR_PATCHED_SHA = 'e16e01eefa44ed709a00aaf1617538f595def0d1805d9674349c9c380dd1e813'
-STEAMVR_PATCH_EDITS = (
-    (0x4365b9, 'be80380100'),    # UNIFORM_BUFFER: 1600 -> 80000
-    (0x4365c8, 'be409c0000'),    # SAMPLER: 800 -> 40000
-    (0x4365df, 'be00710200'),    # SAMPLED_IMAGE: 3200 -> 160000
-    (0x4365f2, 'be00710200'),    # STORAGE_IMAGE: 3200 -> 160000
-    (0x436613, 'b910270000'),    # maxSets: 200 -> 10000
+# Version-specific, hash-locked SteamVR compositor fixes.
+# Each edit: (file offset, expected original instruction, replacement).
+STEAMVR_PATCHES = (
+    {
+        'version': '2.19.3',
+        'original_sha': 'b3747b541c86f683286f13fcce9ed7761e0258ecef3827c5ce915167226947fe',
+        'patched_sha': 'e16e01eefa44ed709a00aaf1617538f595def0d1805d9674349c9c380dd1e813',
+        'backup': 'vrcompositor-v1.0',
+        'max_sets_before': 200,
+        'edits': (
+            (0x4365b9, 'be40060000', 'be80380100'),  # UNIFORM_BUFFER: 1600 -> 80000
+            (0x4365c8, 'be20030000', 'be409c0000'),  # SAMPLER: 800 -> 40000
+            (0x4365df, 'be800c0000', 'be00710200'),  # SAMPLED_IMAGE: 3200 -> 160000
+            (0x4365f2, 'be800c0000', 'be00710200'),  # STORAGE_IMAGE: 3200 -> 160000
+            (0x436613, 'b9c8000000', 'b910270000'),  # maxSets: 200 -> 10000
+        ),
+    },
+    {
+        'version': '2.19.5',
+        'original_sha': '883a11d9e6688b3cd19e4f32859b21d54afcca6ad75e04852a6ed0a2c98542e3',
+        'patched_sha': '2d7d6e1b67ad3d209025565ae20770e234a3727226a616fed2b34768e03fbd7e',
+        'backup': 'vrcompositor-v2.0',
+        'max_sets_before': 512,
+        'edits': (
+            (0x43fb0c, 'be00100000', 'be80380100'),  # UNIFORM_BUFFER: 4096 -> 80000
+            (0x43fb1b, 'be00080000', 'be409c0000'),  # SAMPLER: 2048 -> 40000
+            (0x43fb2b, 'be00200000', 'be00710200'),  # SAMPLED_IMAGE: 8192 -> 160000
+            (0x43fb3e, 'be00200000', 'be00710200'),  # STORAGE_IMAGE: 8192 -> 160000
+            (0x43fb5f, 'b900020000', 'b910270000'),  # maxSets: 512 -> 10000
+        ),
+    },
 )
-
 
 class Failure(Exception):
     pass
@@ -798,8 +820,8 @@ def steamvr_binary(args):
     return binary.resolve()
 
 
-def steamvr_backup():
-    return Path.home() / '.local/share/steamvr-backups/vrcompositor-v1.0'
+def steamvr_backup(patch):
+    return Path.home() / '.local/share/steamvr-backups' / patch['backup']
 
 
 def steamvr_running():
@@ -830,24 +852,24 @@ def atomic_binary_replace(destination, payload):
 def steamvr_status(args):
     binary = steamvr_binary(args)
     checksum = file_sha_lower(binary)
-    if checksum == STEAMVR_ORIGINAL_SHA:
-        state = 'original'
-    elif checksum == STEAMVR_PATCHED_SHA:
-        state = 'patched'
-    else:
-        state = 'unsupported'
-    return binary, checksum, state
+    for patch in STEAMVR_PATCHES:
+        if checksum == patch['original_sha']:
+            return binary, checksum, 'original', patch
+        if checksum == patch['patched_sha']:
+            return binary, checksum, 'patched', patch
+    return binary, checksum, 'unsupported', None
 
 
 def steamvr_maintenance(args, operation='patch'):
-    binary, checksum, state = steamvr_status(args)
+    binary, checksum, state, patch = steamvr_status(args)
     if operation == 'status':
-        print(f'SteamVR: {state} compositor ({checksum})')
+        version = f"SteamVR {patch['version']}" if patch else 'unknown SteamVR version'
+        print(f'SteamVR: {state} compositor ({version}; {checksum})')
         print(f'SteamVR compositor: {binary}')
         return state
     if operation == 'patch':
         if state == 'patched':
-            print('SteamVR: Descriptor-pool fix already installed.')
+            print(f"SteamVR {patch['version']}: Descriptor-pool fix already installed.")
             return state
         if state == 'unsupported':
             print(f'SteamVR: Unsupported or updated compositor ({checksum}); fix skipped.')
@@ -855,12 +877,27 @@ def steamvr_maintenance(args, operation='patch'):
         check(not steamvr_running(),
               'SteamVR is running with the unpatched compositor. Close SteamVR completely and rerun the script.')
         original = binary.read_bytes()
-        check(hashlib.sha256(original).hexdigest() == STEAMVR_ORIGINAL_SHA,
+        check(hashlib.sha256(original).hexdigest() == patch['original_sha'],
               'SteamVR compositor changed during verification')
-        backup = steamvr_backup()
+        backup = steamvr_backup(patch)
         check(not backup.is_symlink(), f'Refusing a symlinked backup: {backup}')
+
+        # A normal launch must not silently patch another application's executable.
+        # Confirmation is requested only if a recognized unpatched build is found.
+        print(f"SteamVR {patch['version']}: Experimental compositor patch required.", flush=True)
+        print(f"  Executable: {binary}", flush=True)
+        print(f"  Backup: {backup}", flush=True)
+        print(f"  Vulkan descriptor maxSets: {patch['max_sets_before']} -> 10000", flush=True)
+        print('  This changes SteamVR for ALL VR applications, not just GTAVXR.', flush=True)
+        print('  The change remains after GTA V closes. SteamVR updates can replace it.', flush=True)
+        print('  Restore later with: python3 gtavxr-linux.py steamvr-restore', flush=True)
+        check(sys.stdin.isatty(),
+              'SteamVR patch requires interactive confirmation. Run steamvr-patch in a terminal.')
+        check(input('Apply this SteamVR patch? [y/N]: ').strip().lower() in ('y', 'yes'),
+              'SteamVR patch declined; compositor unchanged')
+
         if backup.exists():
-            check(backup.is_file() and file_sha_lower(backup) == STEAMVR_ORIGINAL_SHA,
+            check(backup.is_file() and file_sha_lower(backup) == patch['original_sha'],
                   f'Existing SteamVR backup does not match the original compositor: {backup}')
         else:
             backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -869,19 +906,24 @@ def steamvr_maintenance(args, operation='patch'):
                 output.flush()
                 os.fsync(output.fileno())
             backup.chmod(0o700)
-            check(file_sha_lower(backup) == STEAMVR_ORIGINAL_SHA, 'SteamVR backup verification failed')
+            check(file_sha_lower(backup) == patch['original_sha'], 'SteamVR backup verification failed')
         data = bytearray(original)
-        for offset, encoded in STEAMVR_PATCH_EDITS:
-            patch = bytes.fromhex(encoded)
-            data[offset:offset + len(patch)] = patch
-        check(hashlib.sha256(data).hexdigest() == STEAMVR_PATCHED_SHA,
+        for offset, expected_hex, replacement_hex in patch['edits']:
+            expected = bytes.fromhex(expected_hex)
+            replacement = bytes.fromhex(replacement_hex)
+            check(len(expected) == len(replacement) and
+                  data[offset:offset + len(expected)] == expected,
+                  f"SteamVR {patch['version']}: Unexpected original bytes at {offset:#x}")
+            data[offset:offset + len(expected)] = replacement
+        check(hashlib.sha256(data).hexdigest() == patch['patched_sha'],
               'SteamVR patch verification failed; compositor not modified')
-        check(file_sha_lower(binary) == STEAMVR_ORIGINAL_SHA,
+        check(file_sha_lower(binary) == patch['original_sha'],
               'SteamVR compositor changed before replacement')
         atomic_binary_replace(binary, data)
-        check(file_sha_lower(binary) == STEAMVR_PATCHED_SHA,
+        check(file_sha_lower(binary) == patch['patched_sha'],
               'SteamVR patched compositor hash mismatch')
-        print('SteamVR: Descriptor-pool fix applied successfully (200 -> 10000 sets).')
+        print(f"SteamVR {patch['version']}: Descriptor-pool fix applied "
+              f"({patch['max_sets_before']} -> 10000 sets).")
         print(f'SteamVR: Original compositor backed up to {backup}')
         return 'patched'
     check(operation == 'restore', f'Unknown SteamVR operation: {operation}')
@@ -891,17 +933,16 @@ def steamvr_maintenance(args, operation='patch'):
     check(state == 'patched',
           'SteamVR compositor was updated or changed; refusing to overwrite an unknown version')
     check(not steamvr_running(), 'Close SteamVR completely before restoring its compositor')
-    backup = steamvr_backup()
+    backup = steamvr_backup(patch)
     check(backup.is_file() and not backup.is_symlink() and
-          file_sha_lower(backup) == STEAMVR_ORIGINAL_SHA,
+          file_sha_lower(backup) == patch['original_sha'],
           'Verified original SteamVR compositor backup not found')
-    check(file_sha_lower(binary) == STEAMVR_PATCHED_SHA,
+    check(file_sha_lower(binary) == patch['patched_sha'],
           'SteamVR compositor changed before restoration')
     atomic_binary_replace(binary, backup.read_bytes())
-    check(file_sha_lower(binary) == STEAMVR_ORIGINAL_SHA, 'Restored compositor verification failed')
-    print('SteamVR: Original compositor restored; backup retained.')
+    check(file_sha_lower(binary) == patch['original_sha'], 'Restored compositor verification failed')
+    print(f"SteamVR {patch['version']}: Original compositor restored; backup retained.")
     return 'original'
-
 
 def installed(args, verify=False, allow_older=False):
     game = args.game.resolve()

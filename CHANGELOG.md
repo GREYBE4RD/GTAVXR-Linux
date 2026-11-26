@@ -1,4 +1,12 @@
 # GTAVXR changelog
+## Linux launcher v1.13 (2026-11-26)
+
+- Added hash-verified SteamVR 2.19.5 Vulkan descriptor-pool workaround, retaining the earlier 2.19.3 fix. Separate SHA-256 verified backups and restore paths are used for each supported compositor.
+- Validates original instruction bytes before patching, checks the exact patched hash, and refuses unrecognized or updated compositor binaries.
+- Requires explicit first-use confirmation before modifying SteamVR. The changed executable remains shared by other VR games until restored or replaced by an update.
+- Updated README and recovery instructions with an upfront warning about SteamVR modifications and an unverified third-party report of a possible wrist HUD OpenXR issue.
+- Does not change GTAVXR wrist HUD settings. Half-rate rendering and some OpenXR frame-submission failures remain unresolved.
+
 ## Linux launcher v1.10 (2026-11-22)
 
 - Added optional cross-thread bridge and world-eye capture timing, including lock contention, for rendered frames.
