@@ -1,0 +1,50 @@
+name: Publish GTAVXR Linux v1.13
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-v1.13.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create verified v1.13 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ebbbafb5a21f880798c589c53a4580823e970730
+          RELEASE_NOTES: |
+            ## GTAVXR Linux v1.13
+
+            Experimental Linux installer and launcher for GTAVXR 1.0.5 on GTA V Legacy 1.0.3889.0 through Proton and SteamVR/OpenXR.
+
+            ### Changes
+
+            - Added version-locked SteamVR 2.19.5 Vulkan descriptor-pool workaround (512 to 10,000 sets), while retaining support for the verified SteamVR 2.19.3 build (200 to 10,000 sets).
+            - Added SHA-256 verification and version-specific backup and restore handling.
+            - Added an explicit first-time confirmation before modifying SteamVR.
+            - Updated the README, installation instructions, troubleshooting documentation and changelog to explain the SteamVR modifications and recovery steps.
+
+            ### Important SteamVR warning
+
+            The launcher patches SteamVR's `vrcompositor` executable for recognised builds. This change remains in place after GTA V closes and may affect **all SteamVR applications**, not just GTAVXR. SteamVR must be stopped before patching or restoring. Unsupported builds are not modified.
+
+            Check the patch with `python3 gtavxr-linux.py steamvr-status`. Restore the original with `python3 gtavxr-linux.py steamvr-restore` after completely closing SteamVR. A SteamVR update may replace the patch.
+
+            ### Known issues and test status
+
+            - SteamVR 2.19.5 patching restored initial VR rendering on an RX 9070 XT with Steam Frame, but a later OpenXR `xrEndFrame` failure was observed; stable outdoor gameplay has **not** been verified.
+            - The 36 FPS at 72 Hz half-frame-rate problem remains unresolved.
+            - [Upstream issue #105](https://github.com/LVL-VR/GTAVXR/issues/105) reports a possible wrist HUD / OpenXR quad-layer failure and a workaround. **This workaround has not been tested on the maintainer's setup**, and v1.13 does not change HUD settings.
+
+            See the [README](https://github.com/GREYBE4RD/GTAVXR-Linux#readme) before installing or launching the script.
+        run: |
+          if gh release view v1.13 >/dev/null 2>&1; then
+            echo "Release v1.13 already exists; not replacing it."
+            exit 0
+          fi
+          gh release create v1.13 --target "$RELEASE_COMMIT" --title "GTAVXR Linux v1.13" --notes "$RELEASE_NOTES"
